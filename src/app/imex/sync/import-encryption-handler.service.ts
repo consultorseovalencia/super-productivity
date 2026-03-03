@@ -147,14 +147,19 @@ export class ImportEncryptionHandlerService {
       };
     }
 
+    let serverDataDeleted = false;
     try {
       // 1. Delete all server data (encrypted ops can't mix with unencrypted)
       SyncLog.normal(`${LOG_PREFIX}: Deleting server data...`);
       await syncProvider.deleteAllData();
+      serverDataDeleted = true;
 
       // 2. Update sync provider config with new encryption settings BEFORE upload
+      // IMPORTANT: Use providerManager.setProviderConfig() instead of direct setPrivateCfg()
+      // to ensure the currentProviderPrivateCfg$ observable is updated, which is needed
+      // for the settings form to correctly show isEncryptionEnabled state.
       SyncLog.normal(`${LOG_PREFIX}: Updating provider config...`);
-      await syncProvider.setPrivateCfg({
+      await this._providerManager.setProviderConfig(SyncProviderId.SuperSync, {
         ...existingCfg,
         encryptKey: isEncryptionEnabled ? newEncryptKey : undefined,
         isEncryptionEnabled,
@@ -209,7 +214,7 @@ export class ImportEncryptionHandlerService {
 
       return {
         encryptionStateChanged: true,
-        serverDataDeleted: false,
+        serverDataDeleted,
         snapshotUploaded: false,
         error: errorMessage,
       };
@@ -230,6 +235,14 @@ export class ImportEncryptionHandlerService {
     if (!checkResult.willChange) {
       SyncLog.normal(
         'ImportEncryptionHandlerService: No encryption state change detected',
+      );
+      return null;
+    }
+
+    // Never let imports disable encryption — encryption is mandatory for SuperSync
+    if (checkResult.currentEnabled && !checkResult.importedEnabled) {
+      SyncLog.normal(
+        'ImportEncryptionHandlerService: Import would disable encryption — skipping',
       );
       return null;
     }

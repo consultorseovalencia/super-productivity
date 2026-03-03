@@ -61,6 +61,23 @@ body.isDarkTheme {
   z-index: 1000;
 }
 
+// Native mobile: dialogs need explicit safe-area offsets because they use
+// position:fixed inside a container that spans the full viewport.
+// Connected overlays (menus, selects) are handled via the CDK viewport margin
+// patch in GlobalThemeService._patchCdkViewportForSafeArea().
+body.isNativeMobile .cdk-global-overlay-wrapper {
+  padding: var(--safe-area-top) var(--safe-area-right) var(--safe-area-bottom)
+    var(--safe-area-left);
+}
+
+// Constrain menu panels to safe area so content scrolls instead of
+// extending behind the status bar when CDK pushes the overlay up.
+body.isNativeMobile .mat-mdc-menu-panel {
+  max-height: calc(
+    100vh - var(--safe-area-top) - var(--safe-area-bottom) - 16px
+  ) !important;
+}
+
 // DIALOGS
 // ----------
 .mat-mdc-dialog-title.mat-mdc-dialog-title,
@@ -346,14 +363,14 @@ mat-tooltip-component {
   }
   body.hasMobileBottomNav mat-snack-bar-container {
     margin-bottom: calc(
-      var(--bottom-nav-height) + env(safe-area-inset-bottom) + 24px
+      var(--bottom-nav-height) + env(safe-area-inset-bottom) / 2 + 24px
     ) !important;
     pointer-events: auto;
     transition: 150ms margin;
   }
   body.hasMobileBottomNav.isAddTaskBarOpen mat-snack-bar-container {
     margin-bottom: calc(
-      var(--bottom-nav-height) + env(safe-area-inset-bottom) + 48px
+      var(--bottom-nav-height) + env(safe-area-inset-bottom) / 2 + 48px
     ) !important;
     pointer-events: auto;
   }

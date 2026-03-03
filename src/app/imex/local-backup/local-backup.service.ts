@@ -176,10 +176,11 @@ export class LocalBackupService {
 
   private async _importBackup(backupData: string): Promise<void> {
     try {
-      // isForceConflict=true resets vector clock to prevent accumulation of old client IDs
+      // isForceConflict=true only gates page reload; fresh clock is always generated
       await this._backupService.importCompleteBackup(
         JSON.parse(backupData) as AppDataComplete,
         false,
+        true,
         true,
       );
     } catch (e) {

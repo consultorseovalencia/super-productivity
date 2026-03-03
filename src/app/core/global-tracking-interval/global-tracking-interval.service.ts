@@ -2,6 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { IS_ELECTRON, TRACKING_INTERVAL } from '../../app.constants';
 import { EMPTY, fromEvent, interval, merge, Observable } from 'rxjs';
+import { ipcResume$ } from '../ipc-events';
 import {
   debounceTime,
   distinctUntilChanged,
@@ -10,12 +11,10 @@ import {
   share,
   shareReplay,
   startWith,
-  switchMap,
   tap,
 } from 'rxjs/operators';
 import { Tick } from './tick.model';
 import { DateService } from 'src/app/core/date/date.service';
-import { GlobalConfigService } from 'src/app/features/config/global-config.service';
 import { Log } from '../log';
 
 @Injectable({
@@ -23,13 +22,8 @@ import { Log } from '../log';
 })
 export class GlobalTrackingIntervalService {
   private _dateService = inject(DateService);
-  private _globalConfigService = inject(GlobalConfigService);
 
-  globalInterval$: Observable<number> = this._globalConfigService.cfg$.pipe(
-    map((cfg) => cfg?.timeTracking?.trackingInterval ?? TRACKING_INTERVAL),
-    switchMap((_interval) => interval(_interval)),
-    share(),
-  );
+  globalInterval$: Observable<number> = interval(TRACKING_INTERVAL).pipe(share());
   private _currentTrackingStart: number;
   tick$: Observable<Tick> = this.globalInterval$.pipe(
     map(() => {
@@ -87,19 +81,9 @@ export class GlobalTrackingIntervalService {
           )
         : EMPTY;
 
-    const systemResumeBased$ =
-      IS_ELECTRON && typeof window !== 'undefined' && (window as any).electron?.on
-        ? new Observable<string>((subscriber) => {
-            const handler = (): void => {
-              subscriber.next(this._dateService.todayStr());
-            };
-            (window as any).electron.on('system-resume', handler);
-
-            return (): void => {
-              (window as any).electron?.off?.('system-resume', handler);
-            };
-          })
-        : EMPTY;
+    const systemResumeBased$ = IS_ELECTRON
+      ? ipcResume$.pipe(map(() => this._dateService.todayStr()))
+      : EMPTY;
 
     // NOTE:
     // Chromium/Electron aggressively throttles `setInterval` for hidden tabs and fully pauses it while a

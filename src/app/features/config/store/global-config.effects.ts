@@ -1,20 +1,33 @@
 import { inject, Injectable } from '@angular/core';
 import { createEffect, ofType } from '@ngrx/effects';
 import { LOCAL_ACTIONS } from '../../../util/local-actions.token';
-import { distinctUntilChanged, filter, map, tap, withLatestFrom } from 'rxjs/operators';
-import { Store } from '@ngrx/store';
+import {
+  distinctUntilChanged,
+  filter,
+  map,
+  switchMap,
+  tap,
+  withLatestFrom,
+} from 'rxjs/operators';
+import { Action, Store } from '@ngrx/store';
 import { IS_ELECTRON } from '../../../app.constants';
 import { T } from '../../../t.const';
 import { LanguageService } from '../../../core/language/language.service';
-import { DateService } from 'src/app/core/date/date.service';
+import { DateService } from '../../../core/date/date.service';
 import { SnackService } from '../../../core/snack/snack.service';
 import { loadAllData } from '../../../root-store/meta/load-all-data.action';
 import { DEFAULT_GLOBAL_CONFIG } from '../default-global-config.const';
 import { KeyboardConfig } from '../keyboard-config.model';
 import { updateGlobalConfigSection } from './global-config.actions';
-import { selectLocalizationConfig } from './global-config.reducer';
+import {
+  selectConfigFeatureState,
+  selectLocalizationConfig,
+} from './global-config.reducer';
 import { AppFeaturesConfig, MiscConfig } from '../global-config.model';
 import { UserProfileService } from '../../user-profile/user-profile.service';
+import { AppStateActions } from '../../../root-store/app-state/app-state.actions';
+import { TaskSharedActions } from '../../../root-store/meta/task-shared.actions';
+import { selectAllTasks } from '../../tasks/store/task.selectors';
 
 @Injectable()
 export class GlobalConfigEffects {
@@ -22,7 +35,7 @@ export class GlobalConfigEffects {
   private _languageService = inject(LanguageService);
   private _dateService = inject(DateService);
   private _snackService = inject(SnackService);
-  private _store = inject<Store<any>>(Store);
+  private _store = inject(Store);
   private _userProfileService = inject(UserProfileService);
 
   snackUpdate$ = createEffect(
@@ -96,42 +109,70 @@ export class GlobalConfigEffects {
     { dispatch: false },
   );
 
-  setStartOfNextDayDiffOnChange: any = createEffect(
-    () =>
-      this._actions$.pipe(
-        ofType(updateGlobalConfigSection),
-        filter(({ sectionKey, sectionCfg }) => sectionKey === 'misc'),
-        filter(
-          ({ sectionCfg }) =>
-            sectionCfg && typeof (sectionCfg as MiscConfig).startOfNextDay === 'number',
-        ),
-        tap(({ sectionKey, sectionCfg }) => {
-          this._dateService.setStartOfNextDayDiff((sectionCfg as any)['startOfNextDay']);
-        }),
+  setStartOfNextDayDiffOnChange = createEffect(() =>
+    this._actions$.pipe(
+      ofType(updateGlobalConfigSection),
+      filter(({ sectionKey }) => sectionKey === 'misc'),
+      filter(
+        ({ sectionCfg }) =>
+          sectionCfg && typeof (sectionCfg as MiscConfig).startOfNextDay === 'number',
       ),
-    { dispatch: false },
+      withLatestFrom(this._store.select(selectAllTasks)),
+      switchMap(([{ sectionCfg }, allTasks]) => {
+        const oldTodayStr = this._dateService.todayStr();
+        this._dateService.setStartOfNextDayDiff(
+          (sectionCfg as MiscConfig).startOfNextDay,
+        );
+        const newTodayStr = this._dateService.todayStr();
+
+        const actions: Action[] = [
+          AppStateActions.setTodayString({
+            todayStr: newTodayStr,
+            startOfNextDayDiffMs: this._dateService.startOfNextDayDiff,
+          }),
+        ];
+
+        // Migrate active task dueDays so "today" tasks stay "today" after offset change.
+        // Archived tasks are intentionally excluded — their dueDay is historical.
+        if (oldTodayStr !== newTodayStr) {
+          const taskUpdates = allTasks
+            .filter((t) => t.dueDay === oldTodayStr)
+            .map((t) => ({ id: t.id, changes: { dueDay: newTodayStr } }));
+
+          if (taskUpdates.length > 0) {
+            actions.push(TaskSharedActions.updateTasks({ tasks: taskUpdates }));
+          }
+        }
+
+        return actions;
+      }),
+    ),
   );
 
-  setStartOfNextDayDiffOnLoad: any = createEffect(
-    () =>
-      this._actions$.pipe(
-        ofType(loadAllData),
-        tap(({ appDataComplete }) => {
-          const cfg = appDataComplete.globalConfig || DEFAULT_GLOBAL_CONFIG;
-          const startOfNextDay = cfg && cfg.misc && cfg.misc.startOfNextDay;
-          this._dateService.setStartOfNextDayDiff(startOfNextDay);
+  setStartOfNextDayDiffOnLoad = createEffect(() =>
+    this._actions$.pipe(
+      ofType(loadAllData),
+      tap(({ appDataComplete }) => {
+        const cfg = appDataComplete.globalConfig || DEFAULT_GLOBAL_CONFIG;
+        const startOfNextDay = cfg && cfg.misc && cfg.misc.startOfNextDay;
+        this._dateService.setStartOfNextDayDiff(startOfNextDay);
+      }),
+      map(() =>
+        AppStateActions.setTodayString({
+          todayStr: this._dateService.todayStr(),
+          startOfNextDayDiffMs: this._dateService.startOfNextDayDiff,
         }),
       ),
-    { dispatch: false },
+    ),
   );
 
-  notifyElectronAboutCfgChange: any =
+  notifyElectronAboutCfgChange =
     IS_ELECTRON &&
     createEffect(
       () =>
         this._actions$.pipe(
           ofType(updateGlobalConfigSection),
-          withLatestFrom(this._store.select('globalConfig')),
+          withLatestFrom(this._store.select(selectConfigFeatureState)),
           tap(([action, globalConfig]) => {
             // Send the entire settings object to electron for overlay initialization
             window.ea.sendSettingsUpdate(globalConfig);
@@ -140,7 +181,7 @@ export class GlobalConfigEffects {
       { dispatch: false },
     );
 
-  notifyElectronAboutCfgChangeInitially: any =
+  notifyElectronAboutCfgChangeInitially =
     IS_ELECTRON &&
     createEffect(
       () =>
@@ -156,7 +197,7 @@ export class GlobalConfigEffects {
     );
 
   // Handle user profiles being enabled/disabled
-  handleUserProfilesToggle: any = createEffect(
+  handleUserProfilesToggle = createEffect(
     () =>
       this._actions$.pipe(
         ofType(updateGlobalConfigSection),

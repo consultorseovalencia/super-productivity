@@ -54,10 +54,8 @@ describe('ConflictResolutionService', () => {
       'markFailed',
       'getUnsyncedByEntity',
       'mergeRemoteOpClocks',
-      'getProtectedClientIds',
     ]);
     mockOpLogStore.mergeRemoteOpClocks.and.resolveTo(undefined);
-    mockOpLogStore.getProtectedClientIds.and.resolveTo([]);
     mockSnackService = jasmine.createSpyObj('SnackService', ['open']);
     mockValidateStateService = jasmine.createSpyObj('ValidateStateService', [
       'validateAndRepairCurrentState',
@@ -2256,7 +2254,7 @@ describe('ConflictResolutionService', () => {
     });
   });
 
-  describe('vector clock pruning in conflict resolution', () => {
+  describe('no client-side vector clock pruning in conflict resolution', () => {
     const createOpWithLargeClock = (
       id: string,
       clientId: string,
@@ -2298,10 +2296,10 @@ describe('ConflictResolutionService', () => {
       mockOpLogStore.markRejected.and.resolveTo(undefined);
     });
 
-    it('should prune local-win update op clock to MAX_VECTOR_CLOCK_SIZE', async () => {
+    it('should NOT prune local-win update op clock (server handles pruning)', async () => {
       const now = Date.now();
-      const localClock = createLargeClock('local', 6, 1);
-      const remoteClock = createLargeClock('remote', 6, 10);
+      const localClock = createLargeClock('local', 16, 1);
+      const remoteClock = createLargeClock('remote', 16, 10);
 
       const conflicts: EntityConflict[] = [
         {
@@ -2315,7 +2313,6 @@ describe('ConflictResolutionService', () => {
         },
       ];
 
-      // Mock store to return entity state for getCurrentEntityState
       mockStore.select.and.returnValue(of({ id: 'task-1', title: 'Test Task' }));
 
       await service.autoResolveConflictsLWW(conflicts);
@@ -2323,16 +2320,17 @@ describe('ConflictResolutionService', () => {
       expect(mockOpLogStore.appendWithVectorClockUpdate).toHaveBeenCalled();
       const appendedOp = mockOpLogStore.appendWithVectorClockUpdate.calls.first()
         .args[0] as Operation;
-      expect(Object.keys(appendedOp.vectorClock).length).toBeLessThanOrEqual(
+      // All keys preserved — no client-side pruning (server handles it)
+      expect(Object.keys(appendedOp.vectorClock).length).toBeGreaterThan(
         MAX_VECTOR_CLOCK_SIZE,
       );
       expect(appendedOp.vectorClock[TEST_CLIENT_ID]).toBeDefined();
     });
 
-    it('should prune archive-win op clock to MAX_VECTOR_CLOCK_SIZE', async () => {
+    it('should NOT prune archive-win op clock (server handles pruning)', async () => {
       const now = Date.now();
-      const archiveClock = createLargeClock('archive', 6, 1);
-      const remoteClock = createLargeClock('remote', 6, 10);
+      const archiveClock = createLargeClock('archive', 16, 1);
+      const remoteClock = createLargeClock('remote', 16, 10);
 
       const conflicts: EntityConflict[] = [
         {
@@ -2368,18 +2366,17 @@ describe('ConflictResolutionService', () => {
       expect(mockOpLogStore.appendWithVectorClockUpdate).toHaveBeenCalled();
       const appendedOp = mockOpLogStore.appendWithVectorClockUpdate.calls.first()
         .args[0] as Operation;
-      expect(Object.keys(appendedOp.vectorClock).length).toBeLessThanOrEqual(
+      // All keys preserved — no client-side pruning (server handles it)
+      expect(Object.keys(appendedOp.vectorClock).length).toBeGreaterThan(
         MAX_VECTOR_CLOCK_SIZE,
       );
       expect(appendedOp.vectorClock[TEST_CLIENT_ID]).toBeDefined();
     });
 
-    it('should preserve protected client IDs during pruning of local-win ops', async () => {
+    it('should preserve all client IDs in unpruned local-win op clock', async () => {
       const protectedId = 'protected-sync-import-client';
-      mockOpLogStore.getProtectedClientIds.and.resolveTo([protectedId]);
 
       const now = Date.now();
-      // Protected client has the lowest counter, should still be preserved
       const localClock: VectorClock = { [protectedId]: 1 };
       for (let i = 1; i <= 5; i++) {
         localClock[`high-local-${i}`] = i * 100;
@@ -2404,11 +2401,9 @@ describe('ConflictResolutionService', () => {
 
       const appendedOp = mockOpLogStore.appendWithVectorClockUpdate.calls.first()
         .args[0] as Operation;
+      // No client-side pruning — all keys preserved including protected client
       expect(appendedOp.vectorClock[protectedId]).toBeDefined();
       expect(appendedOp.vectorClock[TEST_CLIENT_ID]).toBeDefined();
-      expect(Object.keys(appendedOp.vectorClock).length).toBeLessThanOrEqual(
-        MAX_VECTOR_CLOCK_SIZE,
-      );
     });
   });
 
@@ -2702,6 +2697,39 @@ describe('ConflictResolutionService', () => {
       expect(result.conflict!.entityId).toBe('task-1');
       // Should NOT have called store.select — pending ops exist, so normal conflict path
       expect(mockStore.select).not.toHaveBeenCalled();
+    });
+
+    it('should use entityId fallback when entityIds is an empty array', async () => {
+      // Regression test: entityIds: [] is truthy in JS, so the old || fallback
+      // would use the empty array instead of falling back to entityId.
+      const remoteOp: Operation = {
+        ...createMockOp('remote-1', 'clientB'),
+        entityId: 'task-1',
+        entityIds: [],
+        vectorClock: { clientB: 1 },
+      };
+
+      const localOp: Operation = {
+        ...createMockOp('local-1', 'clientA'),
+        entityId: 'task-1',
+        vectorClock: { clientA: 1 },
+      };
+
+      const localPendingOpsByEntity = new Map<string, Operation[]>();
+      localPendingOpsByEntity.set('TASK:task-1', [localOp]);
+
+      const appliedFrontierByEntity = new Map<string, VectorClock>();
+      appliedFrontierByEntity.set('TASK:task-1', { clientA: 1 });
+
+      const result = await service.checkOpForConflicts(
+        remoteOp,
+        buildCtx({ localPendingOpsByEntity, appliedFrontierByEntity }),
+      );
+
+      // With the fix, entityId 'task-1' is resolved and a conflict is detected.
+      // Without the fix, entityIds: [] would be used as-is, skipping the entity entirely.
+      expect(result.conflict).not.toBeNull();
+      expect(result.conflict!.entityId).toBe('task-1');
     });
   });
 

@@ -6,6 +6,7 @@ import {
   distinctUntilChanged,
   exhaustMap,
   filter,
+  first,
   map,
   pairwise,
   shareReplay,
@@ -36,6 +37,7 @@ import { InitialPwaUpdateCheckService } from '../../core/initial-pwa-update-chec
 import { DataInitStateService } from '../../core/data-init/data-init-state.service';
 import { SyncLog } from '../../core/log';
 import { alertDialog } from '../../util/native-dialogs';
+import { vectorClockPruned$ } from '../../core/util/vector-clock';
 
 @Injectable()
 export class SyncEffects {
@@ -64,13 +66,17 @@ export class SyncEffects {
               isEnabled ? this._execBeforeCloseService.onBeforeClose$ : EMPTY,
             ),
             filter((ids) => ids.includes(SYNC_BEFORE_CLOSE_ID)),
-            tap(() => {
+            switchMap(() => {
               this._taskService.setCurrentId(null);
               this._simpleCounterService.flushAccumulatedTime();
               this._simpleCounterService.turnOffAll();
+              // Yield to the event loop so NgRx effects triggered by the above
+              // dispatches (e.g. persistence writes to IndexedDB) get a chance to
+              // run before we start the sync.  A single macrotask tick is enough
+              // because the op-log persistence effects schedule their writes in
+              // the same tick; we just need to let them execute.
+              return new Promise<void>((resolve) => setTimeout(resolve, 0));
             }),
-            // minimally hacky delay to wait for inMemoryDatabase update...
-            delay(100),
             switchMap(() =>
               this._syncWrapperService
                 .sync()
@@ -91,6 +97,24 @@ export class SyncEffects {
           ),
     { dispatch: false },
   );
+  vectorClockPruningNotification$ = createEffect(
+    () =>
+      vectorClockPruned$.pipe(
+        tap(({ originalSize, maxSize }) => {
+          this._snackService.open({
+            msg: T.F.SYNC.S.VECTOR_CLOCK_LIMIT_REACHED,
+            type: 'WARNING',
+            translateParams: {
+              originalSize,
+              maxSize,
+            },
+            config: { duration: 0 },
+          });
+        }),
+      ),
+    { dispatch: false },
+  );
+
   // private _wasJustEnabled$: Observable<boolean> = of(false);
   private _wasJustEnabled$: Observable<boolean> =
     this._dataInitStateService.isAllDataLoadedInitially$.pipe(
@@ -119,16 +143,16 @@ export class SyncEffects {
               ),
             ),
 
-            // initial after starting app
+            // initial after starting app — wait for provider to actually be ready
             this._initialPwaUpdateCheckService.afterInitialUpdateCheck$.pipe(
-              concatMap(() => this._syncWrapperService.isEnabledAndReady$),
-              take(1),
+              concatMap(() =>
+                this._syncWrapperService.isEnabledAndReady$.pipe(
+                  filter((v) => v),
+                  first(),
+                ),
+              ),
               withLatestFrom(this._syncWrapperService.syncProviderId$),
-              switchMap(([isEnabledAndReady, providerId]) => {
-                if (!isEnabledAndReady) {
-                  this._syncTriggerService.setInitialSyncDone(true);
-                  return EMPTY;
-                }
+              switchMap(([_, providerId]) => {
                 // SuperSync can be delayed - data is already local, just needs upload/download
                 // Other providers (Dropbox, WebDAV, LocalFile) need sync first to download data
                 if (providerId === SyncProviderId.SuperSync) {
@@ -153,7 +177,10 @@ export class SyncEffects {
         exhaustMap(([trigger, isOnline]) => {
           if (!isOnline) {
             // this._snackService.open({msg: T.F.DROPBOX.S.OFFLINE, type: 'ERROR'});
-            if (trigger === SYNC_INITIAL_SYNC_TRIGGER) {
+            if (
+              trigger === SYNC_INITIAL_SYNC_TRIGGER ||
+              trigger === 'SYNC_AFTER_ENABLE'
+            ) {
               this._syncTriggerService.setInitialSyncDone(true);
             }
             // we need to return something
@@ -162,7 +189,10 @@ export class SyncEffects {
           return this._syncWrapperService
             .sync()
             .then(() => {
-              if (trigger === SYNC_INITIAL_SYNC_TRIGGER) {
+              if (
+                trigger === SYNC_INITIAL_SYNC_TRIGGER ||
+                trigger === 'SYNC_AFTER_ENABLE'
+              ) {
                 this._syncTriggerService.setInitialSyncDone(true);
               }
             })

@@ -24,6 +24,8 @@ import {
   REDMINE_TYPE,
   LINEAR_TYPE,
   CLICKUP_TYPE,
+  AZURE_DEVOPS_TYPE,
+  NEXTCLOUD_DECK_TYPE,
 } from './issue.const';
 import { TaskService } from '../tasks/task.service';
 import { IssueTask, Task, TaskCopy } from '../tasks/task.model';
@@ -40,6 +42,8 @@ import { GiteaCommonInterfacesService } from './providers/gitea/gitea-common-int
 import { RedmineCommonInterfacesService } from './providers/redmine/redmine-common-interfaces.service';
 import { LinearCommonInterfacesService } from './providers/linear/linear-common-interfaces.service';
 import { ClickUpCommonInterfacesService } from './providers/clickup/clickup-common-interfaces.service';
+import { AzureDevOpsCommonInterfacesService } from './providers/azure-devops/azure-devops-common-interfaces.service';
+import { NextcloudDeckCommonInterfacesService } from './providers/nextcloud-deck/nextcloud-deck-common-interfaces.service';
 import { SnackService } from '../../core/snack/snack.service';
 import { T } from '../../t.const';
 import { TranslateService } from '@ngx-translate/core';
@@ -48,6 +52,7 @@ import { ICalIssueReduced } from './providers/calendar/calendar.model';
 import { WorkContextType } from '../work-context/work-context.model';
 import { WorkContextService } from '../work-context/work-context.service';
 import { ProjectService } from '../project/project.service';
+import { _MISSING_PROJECT_ } from '../project/project.const';
 import { IssueProviderService } from './issue-provider.service';
 import { CalendarIntegrationService } from '../calendar-integration/calendar-integration.service';
 import { getCalendarEventIdCandidates } from '../calendar-integration/get-calendar-event-id-candidates';
@@ -75,6 +80,10 @@ export class IssueService {
   private _redmineInterfaceService = inject(RedmineCommonInterfacesService);
   private _linearCommonInterfaceService = inject(LinearCommonInterfacesService);
   private _clickUpCommonInterfaceService = inject(ClickUpCommonInterfacesService);
+  private _azureDevOpsCommonInterfaceService = inject(AzureDevOpsCommonInterfacesService);
+  private _nextcloudDeckCommonInterfaceService = inject(
+    NextcloudDeckCommonInterfacesService,
+  );
   private _calendarCommonInterfaceService = inject(CalendarCommonInterfacesService);
   private _issueProviderService = inject(IssueProviderService);
   private _workContextService = inject(WorkContextService);
@@ -97,6 +106,8 @@ export class IssueService {
     [ICAL_TYPE]: this._calendarCommonInterfaceService,
     [LINEAR_TYPE]: this._linearCommonInterfaceService,
     [CLICKUP_TYPE]: this._clickUpCommonInterfaceService,
+    [AZURE_DEVOPS_TYPE]: this._azureDevOpsCommonInterfaceService,
+    [NEXTCLOUD_DECK_TYPE]: this._nextcloudDeckCommonInterfaceService,
 
     // trello
     [TRELLO_TYPE]: this._trelloCommonInterfacesService,
@@ -700,8 +711,8 @@ export class IssueService {
           translateParams: {
             title: res.task.title,
             contextTitle: res.task.projectId
-              ? (await this._projectService.getByIdOnce$(res.task.projectId).toPromise())
-                  ?.title
+              ? ((await this._projectService.getByIdOnce$(res.task.projectId).toPromise())
+                  ?.title ?? _MISSING_PROJECT_)
               : 'another tag',
           },
         });

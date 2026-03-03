@@ -5,9 +5,8 @@ export const IS_ELECTRON = navigator.userAgent.toLowerCase().indexOf(' electron/
 export const IS_WEB_BROWSER = !IS_ELECTRON && !IS_ANDROID_WEB_VIEW;
 
 export const TRACKING_INTERVAL = 1000;
-export const TIME_TRACKING_TO_DB_INTERVAL = 15000;
 
-export const DRAG_DELAY_FOR_TOUCH = 100;
+export const DRAG_DELAY_FOR_TOUCH = 500;
 
 // TODO use
 // const CORS_SKIP_EXTRA_HEADER_PROP = 'sp_cors_skip' as const;
@@ -94,4 +93,6 @@ export const HANDLED_ERROR_PROP_STR = 'HANDLED_ERROR_PROP';
 export const HISTORY_STATE = {
   MOBILE_NAVIGATION: 'mobileSideNav',
   TASK_DETAIL_PANEL: 'taskDetailPanel',
+  DIALOG_FULLSCREEN_MARKDOWN: 'dialogFullscreenMarkdown',
+  NOTES: 'notes',
 };

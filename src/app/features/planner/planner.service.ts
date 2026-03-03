@@ -12,6 +12,8 @@ import { GlobalTrackingIntervalService } from '../../core/global-tracking-interv
 import { selectTodayTaskIds } from '../work-context/store/work-context.selectors';
 import { msToString } from '../../ui/duration/ms-to-string.pipe';
 import { getDbDateStr } from '../../util/get-db-date-str';
+import { parseDbDateStr } from '../../util/parse-db-date-str';
+import { getDiffInDays } from '../../util/get-diff-in-days';
 import { selectAllTaskRepeatCfgs } from '../task-repeat-cfg/store/task-repeat-cfg.selectors';
 import { Log } from '../../core/log';
 import { LayoutService } from '../../core-ui/layout/layout.service';
@@ -38,6 +40,7 @@ export class PlannerService {
       : PlannerService.INITIAL_DAYS_DESKTOP,
   );
   public isLoadingMore$ = new BehaviorSubject<boolean>(false);
+  private _loadMoreTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   includedWeekDays$ = of([0, 1, 2, 3, 4, 5, 6]);
 
@@ -172,10 +175,35 @@ export class PlannerService {
     this._userHasScrolled.set(true);
 
     // Yield to event loop to ensure loading state is visible
-    setTimeout(() => {
+    this._loadMoreTimeoutId = setTimeout(() => {
+      this._loadMoreTimeoutId = null;
       const currentCount = this._daysToShowCount$.value;
       this._daysToShowCount$.next(currentCount + PlannerService.AUTO_LOAD_INCREMENT);
       this.isLoadingMore$.next(false);
     }, 0);
+  }
+
+  ensureDayLoaded(dayDate: string): void {
+    const target = parseDbDateStr(dayDate);
+    const todayMs = Date.now() - this._dateService.startOfNextDayDiff;
+    const diff = getDiffInDays(new Date(todayMs), target);
+    if (diff >= 0 && diff >= this._daysToShowCount$.value) {
+      this._userHasScrolled.set(true);
+      this._daysToShowCount$.next(diff + 3);
+    }
+  }
+
+  resetScrollState(): void {
+    if (this._loadMoreTimeoutId !== null) {
+      clearTimeout(this._loadMoreTimeoutId);
+      this._loadMoreTimeoutId = null;
+    }
+    this.isLoadingMore$.next(false);
+    this._userHasScrolled.set(false);
+    this._daysToShowCount$.next(
+      this._layoutService.isXs()
+        ? PlannerService.INITIAL_DAYS_MOBILE
+        : PlannerService.INITIAL_DAYS_DESKTOP,
+    );
   }
 }

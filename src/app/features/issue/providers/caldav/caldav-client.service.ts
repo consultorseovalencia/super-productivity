@@ -275,15 +275,12 @@ export class CaldavClientService {
     );
   }
 
-  updateState$(
+  updateFields$(
     caldavCfg: CaldavCfg,
     issueId: string,
-    completed: boolean,
-    summary: string,
+    fields: { completed?: boolean; summary?: string; note?: string },
   ): Observable<void> {
-    return from(
-      this._updateTask(caldavCfg, issueId, { completed: completed, summary: summary }),
-    ).pipe(
+    return from(this._updateTask(caldavCfg, issueId, fields)).pipe(
       catchError((err) => throwError({ [HANDLED_ERROR_PROP_STR]: 'Caldav: ' + err })),
     );
   }
@@ -376,7 +373,7 @@ export class CaldavClientService {
   private async _updateTask(
     cfg: CaldavCfg,
     uid: string,
-    updates: { completed: boolean; summary: string },
+    updates: { completed?: boolean; summary?: string; note?: string },
   ): Promise<void> {
     const cal = await this._getCalendar(cfg);
 
@@ -420,20 +417,32 @@ export class CaldavClientService {
     const now = ICAL.Time.now();
     let changeObserved = false;
 
-    const oldCompleted = !!todo.getFirstPropertyValue('completed');
-    if (updates.completed !== oldCompleted) {
-      if (updates.completed) {
-        todo.updatePropertyWithValue('completed', now);
-      } else {
-        todo.removeProperty('completed');
+    if (updates.completed !== undefined) {
+      const oldCompleted = !!todo.getFirstPropertyValue('completed');
+      if (updates.completed !== oldCompleted) {
+        if (updates.completed) {
+          todo.updatePropertyWithValue('completed', now);
+        } else {
+          todo.removeProperty('completed');
+        }
+        changeObserved = true;
       }
-      changeObserved = true;
     }
 
-    const oldSummary = todo.getFirstPropertyValue('summary');
-    if (updates.summary !== oldSummary) {
-      todo.updatePropertyWithValue('summary', updates.summary);
-      changeObserved = true;
+    if (updates.summary !== undefined) {
+      const oldSummary = todo.getFirstPropertyValue('summary');
+      if (updates.summary !== oldSummary) {
+        todo.updatePropertyWithValue('summary', updates.summary);
+        changeObserved = true;
+      }
+    }
+
+    if (updates.note !== undefined) {
+      const oldNote = (todo.getFirstPropertyValue('description') as string) || '';
+      if (updates.note !== oldNote) {
+        todo.updatePropertyWithValue('description', updates.note);
+        changeObserved = true;
+      }
     }
 
     if (!changeObserved) {
@@ -447,7 +456,7 @@ export class CaldavClientService {
     // As 'sequence' starts at 0 and completing probably counts as a major change, then it should be at least 1 in the end,
     // if no other changes have been written.
     const sequence = todo.getFirstPropertyValue('sequence');
-    const sequenceInt = sequence ? parseInt(sequence as string) + 1 : 1;
+    const sequenceInt = sequence ? parseInt(sequence as string, 10) + 1 : 1;
     todo.updatePropertyWithValue('sequence', sequenceInt);
 
     task.data = ICAL.stringify(jCal);

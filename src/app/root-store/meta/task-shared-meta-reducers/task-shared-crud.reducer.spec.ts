@@ -324,6 +324,22 @@ describe('taskSharedCrudMetaReducer', () => {
         baseState,
       );
     });
+
+    it('should not duplicate task ID in project or tag taskIds when task already exists', () => {
+      const testState = createStateWithExistingTasks(['task1'], [], ['task1']);
+      const action = createAddTaskAction();
+
+      metaReducer(testState, action);
+      expectStateUpdate(
+        {
+          ...expectProjectUpdate('project1', { taskIds: ['task1'] }),
+          ...expectTagUpdate('tag1', { taskIds: ['task1'] }),
+        },
+        action,
+        mockReducer,
+        testState,
+      );
+    });
   });
 
   describe('convertToMainTask action', () => {
@@ -432,6 +448,45 @@ describe('taskSharedCrudMetaReducer', () => {
         {
           ...expectProjectUpdate('project1', { taskIds: ['task1', 'existing-task'] }),
           ...expectTagUpdate('tag1', { taskIds: ['task1', 'existing-task'] }),
+        },
+        action,
+        mockReducer,
+        testState,
+      );
+    });
+
+    it('should not duplicate task ID in project or tag taskIds when task already exists', () => {
+      const { action, testState: baseTestState } = createConvertAction();
+
+      const testState = {
+        ...baseTestState,
+        [PROJECT_FEATURE_NAME]: {
+          ...baseTestState[PROJECT_FEATURE_NAME],
+          entities: {
+            ...baseTestState[PROJECT_FEATURE_NAME].entities,
+            project1: {
+              ...baseTestState[PROJECT_FEATURE_NAME].entities.project1,
+              taskIds: ['task1'],
+            } as Project,
+          },
+        },
+        [TAG_FEATURE_NAME]: {
+          ...baseTestState[TAG_FEATURE_NAME],
+          entities: {
+            ...baseTestState[TAG_FEATURE_NAME].entities,
+            tag1: {
+              ...baseTestState[TAG_FEATURE_NAME].entities.tag1,
+              taskIds: ['task1'],
+            } as Tag,
+          },
+        },
+      };
+
+      metaReducer(testState, action);
+      expectStateUpdate(
+        {
+          ...expectProjectUpdate('project1', { taskIds: ['task1'] }),
+          ...expectTagUpdate('tag1', { taskIds: ['task1'] }),
         },
         action,
         mockReducer,
@@ -1402,7 +1457,7 @@ describe('taskSharedCrudMetaReducer', () => {
     });
 
     describe('convertToMainTask action', () => {
-      it('should remove parent from tag when converting sub-task to main task with same tag', () => {
+      it('should keep parent tags when converting sub-task to main task with same tag', () => {
         // Setup: parent and sub-task exist, parent is in tag
         const testState = createStateWithExistingTasks(
           ['parent-task', 'sub-task'],
@@ -1432,14 +1487,14 @@ describe('taskSharedCrudMetaReducer', () => {
         expectStateUpdate(
           {
             ...expectTaskUpdate('parent-task', {
-              tagIds: [], // Tag removed from parent
+              tagIds: ['tag1'], // Parent keeps its tag
             }),
             ...expectTaskUpdate('sub-task', {
               parentId: undefined, // No longer a sub-task
               tagIds: ['tag1'], // Inherited parent's tag
             }),
             ...expectTagUpdate('tag1', {
-              taskIds: ['sub-task'], // Only converted task in tag
+              taskIds: ['sub-task', 'parent-task'], // Both tasks in tag
             }),
           },
           action,

@@ -8,7 +8,6 @@ import {
 import { ElectronAPI } from './electronAPI.d';
 import { IPCEventValue } from './shared-with-frontend/ipc-events.const';
 import { LocalBackupMeta } from '../src/app/imex/local-backup/local-backup.model';
-import { SyncGetRevResult } from '../src/app/imex/sync/sync.model';
 import {
   PluginManifest,
   PluginNodeScriptRequest,
@@ -38,10 +37,6 @@ const ea: ElectronAPI = {
     _invoke('BACKUP_IS_AVAILABLE') as Promise<false | LocalBackupMeta>,
   loadBackupData: (backupPath) =>
     _invoke('BACKUP_LOAD_DATA', backupPath) as Promise<string>,
-  fileSyncGetRevAndClientUpdate: (backupPath) =>
-    _invoke('FILE_SYNC_GET_REV_AND_CLIENT_UPDATE', backupPath) as Promise<
-      { rev: string; clientUpdate?: number } | SyncGetRevResult
-    >,
   fileSyncSave: (filePath) =>
     _invoke('FILE_SYNC_SAVE', filePath) as Promise<string | Error>,
   fileSyncLoad: (filePath) =>
@@ -204,6 +199,14 @@ const ea: ElectronAPI = {
     ),
 
   exec: (command: string) => _send('EXEC', command),
+
+  updateTodayTasks: (tasks: any[]) => _send('TODAY_TASKS_UPDATED', tasks),
+
+  onSwitchTask: (listener: (taskId: string) => void) => {
+    // We register the listener directly without using standard 'on' method
+    // Because the standard 'on' method doesn't strip out the event arg like we need
+    ipcRenderer.on('SWITCH_TASK', (_: any, taskId: string) => listener(taskId));
+  },
 
   // Plugin API
   pluginExecNodeScript: (

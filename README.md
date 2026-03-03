@@ -144,7 +144,7 @@
   - The **anti-procrastination feature** helps you gain perspective when you really need to.
   - Need some extra focus? A **Pomodoro timer** is also always at hand.
   - **Collect personal metrics** to see, which of your work routines need adjustments.
-- Integrate with **Jira**, **Trello**, **GitHub**, **GitLab**, **Gitea** and **OpenProject**. Auto import tasks assigned to you, plan the details locally, automatically create work logs, and get notified immediately, when something changes.
+- Integrate with **Jira**, **Trello**, **GitHub**, **GitLab**, **Gitea**, **OpenProject**, **Linear**, **ClickUp** and **Azure DevOps**. Auto import tasks assigned to you, plan the details locally, automatically create work logs, and get notified immediately, when something changes.
 - Basic **CalDAV** integration.
 - Back up and synchronize your data across multiple devices with **Dropbox** and **WebDAV** support
 - Attach context information to tasks and projects. Create **notes**, attach **files** or create **project-level bookmarks** for links, files, and even commands.
@@ -372,7 +372,7 @@ There are several ways to help.
 Recently support for Super Productivity has been growing! A big thank you to all our sponsors, especially the ones below!
 
 <p style="font-size:21px; color:black;">Agentic AI Quality Engineering via
-        <a href="https://www.testmu.ai/?utm_source=superproductivity&utm_medium=sponsor" target="_blank">
+        <a href="https://www.testmuai.com/?utm_medium=sponsor&utm_source=superproductivity" target="_blank">
             <picture>
                 <source srcset="https://super-productivity.com/_astro/test-mu-log-dark.Dy0yXuJ7.svg" media="(prefers-color-scheme: dark)" />
                 <img src="https://super-productivity.com/_astro/test-mu-log-light.CehEzLCt.svg" style="vertical-align: middle;" width="250" height="45" alt="TestMu AI" />
@@ -492,9 +492,9 @@ You can provide the default values for WebDAV settings in the "Sync" section of 
 
 ## Custom themes (desktop only)
 
-In addition to color coding your projects and tags and to the dark and light theme you can also load completely custom CSS to restyle everything. To load a custom theme you simply need to put them into a new file named `styles.css` directly in the [user data folder](#user-data-folder).
+The app ships with several built-in themes (Arc, Catppuccin Mocha, Cyberpunk, Dark Base, Dracula, Everforest, Glass, Nord Polar Night, Nord Snow Storm, Rainbow) that you can select from the settings. You can also color-code individual projects and tags with custom primary, accent, and warn colors.
 
-There is a great set of [themes available for download in this repository](https://github.com/super-productivity/super-productivity-themes/tree/main/dist) as well as some [info on how to create your own custom themes](https://github.com/super-productivity/super-productivity-themes).
+In addition, you can load completely custom CSS to restyle everything. To load a custom theme, simply put your styles into a new file named `styles.css` directly in the [user data folder](#user-data-folder). Your custom CSS will override the default styles, giving you full control over the app's appearance.
 
 ## Custom WebDAV Syncing
 

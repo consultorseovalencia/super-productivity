@@ -1,24 +1,28 @@
 import { inject, Injectable } from '@angular/core';
 import { Store } from '@ngrx/store';
+import { MatDialog } from '@angular/material/dialog';
+import { firstValueFrom } from 'rxjs';
 import { OperationSyncCapable } from '../sync-providers/provider.interface';
 import { OperationLogStoreService } from '../persistence/operation-log-store.service';
 import { VectorClockService } from './vector-clock.service';
 import {
   incrementVectorClock,
+  limitVectorClockSize,
   mergeVectorClocks,
-  selectProtectedClientIds,
 } from '../../core/util/vector-clock';
 import { StateSnapshotService } from '../backup/state-snapshot.service';
 import { ValidateStateService } from '../validation/validate-state.service';
 import { SnackService } from '../../core/snack/snack.service';
+import { UserInputWaitStateService } from '../../imex/sync/user-input-wait-state.service';
 import { T } from '../../t.const';
 import { loadAllData } from '../../root-store/meta/load-all-data.action';
 import { CURRENT_SCHEMA_VERSION } from '../persistence/schema-migration.service';
-import { ActionType, Operation, OpType } from '../core/operation.types';
+import { ActionType, Operation, OpType, SyncImportReason } from '../core/operation.types';
 import { uuidv7 } from '../../util/uuid-v7';
 import { OpLog } from '../../core/log';
 import { SYSTEM_TAG_IDS } from '../../features/tag/tag.const';
 import { CLIENT_ID_PROVIDER } from '../util/client-id.provider';
+import { DialogServerMigrationConfirmComponent } from './dialog-server-migration-confirm/dialog-server-migration-confirm.component';
 
 /**
  * Service responsible for handling server migration scenarios.
@@ -51,6 +55,8 @@ export class ServerMigrationService {
   private stateSnapshotService = inject(StateSnapshotService);
   private snackService = inject(SnackService);
   private clientIdProvider = inject(CLIENT_ID_PROVIDER);
+  private _matDialog = inject(MatDialog);
+  private _userInputWaitState = inject(UserInputWaitStateService);
 
   /**
    * Checks if we're connecting to a new/empty server and handles migration if needed.
@@ -79,8 +85,17 @@ export class ServerMigrationService {
     // Check if server is empty by doing a minimal download request
     const response = await syncProvider.downloadOps(0, undefined, 1);
     if (response.latestSeq !== 0) {
-      // Server has data, this is not a migration scenario
-      // (might be joining an existing sync group)
+      // Server has data — check if this is a provider switch with stale syncedAt
+      const hasSyncedOps = await this.opLogStore.hasSyncedOps();
+      if (hasSyncedOps) {
+        const confirmed = await this._confirmMigrationToNonEmptyServer();
+        if (confirmed) {
+          await this.handleServerMigration(syncProvider, {
+            skipServerEmptyCheck: true,
+            syncImportReason: 'SERVER_MIGRATION',
+          });
+        }
+      }
       return;
     }
 
@@ -134,7 +149,7 @@ export class ServerMigrationService {
    */
   async handleServerMigration(
     syncProvider: OperationSyncCapable,
-    options?: { skipServerEmptyCheck?: boolean },
+    options?: { skipServerEmptyCheck?: boolean; syncImportReason?: SyncImportReason },
   ): Promise<void> {
     // Double-check server is still empty (in case another client just uploaded)
     // This is called inside the upload lock, but network timing could still race
@@ -218,7 +233,10 @@ export class ServerMigrationService {
     for (const entry of allLocalOps) {
       mergedClock = mergeVectorClocks(mergedClock, entry.op.vectorClock);
     }
-    const newClock = incrementVectorClock(mergedClock, clientId);
+    const newClock = limitVectorClockSize(
+      incrementVectorClock(mergedClock, clientId),
+      clientId,
+    );
 
     OpLog.normal(
       `ServerMigrationService: Merged ${allLocalOps.length} local op clocks into SYNC_IMPORT vector clock.`,
@@ -238,27 +256,37 @@ export class ServerMigrationService {
       vectorClock: newClock,
       timestamp: Date.now(),
       schemaVersion: CURRENT_SCHEMA_VERSION,
+      syncImportReason: options?.syncImportReason ?? 'SERVER_MIGRATION',
     };
 
     // Append to operation log - will be uploaded via snapshot endpoint
     await this.opLogStore.append(op, 'local');
 
-    // CRITICAL: Set protected client IDs to include ALL vector clock keys from the SYNC_IMPORT.
-    // When new operations are created after this SYNC_IMPORT, limitVectorClockSize() is called
-    // which prunes low-counter entries. Without protecting all these IDs, subsequent ops
-    // would have incomplete clocks (missing the pruned entries), causing them to appear
-    // CONCURRENT with this SYNC_IMPORT instead of GREATER_THAN. This leads to the bug where
-    // other clients filter out legitimate ops as "invalidated by SYNC_IMPORT".
-    const protectedIds = selectProtectedClientIds(newClock);
-    await this.opLogStore.setProtectedClientIds(protectedIds);
-    OpLog.normal(
-      `ServerMigrationService: Set protected client IDs from SYNC_IMPORT: [${protectedIds.join(', ')}]`,
-    );
-
     OpLog.normal(
       'ServerMigrationService: Created SYNC_IMPORT operation for server migration. ' +
         'Will be uploaded immediately via follow-up upload.',
     );
+  }
+
+  /**
+   * Shows a confirmation dialog when connecting to a non-empty server with
+   * previously synced ops (provider switch scenario).
+   */
+  private async _confirmMigrationToNonEmptyServer(): Promise<boolean> {
+    const stopWaiting = this._userInputWaitState.startWaiting('server-migration-confirm');
+
+    try {
+      const dialogRef = this._matDialog.open(DialogServerMigrationConfirmComponent, {
+        disableClose: true,
+        restoreFocus: true,
+        autoFocus: false,
+      });
+
+      const result = await firstValueFrom(dialogRef.afterClosed());
+      return result === true;
+    } finally {
+      stopWaiting();
+    }
   }
 
   /**

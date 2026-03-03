@@ -27,6 +27,16 @@ import {
   ICalIssue,
   ICalIssueReduced,
 } from './providers/calendar/calendar.model';
+import { AzureDevOpsCfg } from './providers/azure-devops/azure-devops.model';
+import {
+  AzureDevOpsIssue,
+  AzureDevOpsIssueReduced,
+} from './providers/azure-devops/azure-devops-issue/azure-devops-issue.model';
+import { NextcloudDeckCfg } from './providers/nextcloud-deck/nextcloud-deck.model';
+import {
+  NextcloudDeckIssue,
+  NextcloudDeckIssueReduced,
+} from './providers/nextcloud-deck/nextcloud-deck-issue.model';
 
 export interface BaseIssueProviderCfg {
   isEnabled: boolean;
@@ -44,7 +54,9 @@ export type IssueProviderKey =
   | 'TRELLO'
   | 'REDMINE'
   | 'LINEAR'
-  | 'CLICKUP';
+  | 'CLICKUP'
+  | 'AZURE_DEVOPS'
+  | 'NEXTCLOUD_DECK';
 
 export type IssueIntegrationCfg =
   | JiraCfg
@@ -57,7 +69,9 @@ export type IssueIntegrationCfg =
   | TrelloCfg
   | RedmineCfg
   | LinearCfg
-  | ClickUpCfg;
+  | ClickUpCfg
+  | AzureDevOpsCfg
+  | NextcloudDeckCfg;
 
 export enum IssueLocalState {
   OPEN = 'OPEN',
@@ -78,6 +92,8 @@ export interface IssueIntegrationCfgs {
   REDMINE?: RedmineCfg;
   LINEAR?: LinearCfg;
   CLICKUP?: ClickUpCfg;
+  AZURE_DEVOPS?: AzureDevOpsCfg;
+  NEXTCLOUD_DECK?: NextcloudDeckCfg;
 }
 
 export type IssueData =
@@ -91,7 +107,9 @@ export type IssueData =
   | RedmineIssue
   | TrelloIssue
   | LinearIssue
-  | ClickUpTask;
+  | ClickUpTask
+  | AzureDevOpsIssue
+  | NextcloudDeckIssue;
 
 export type IssueDataReduced =
   | GithubIssueReduced
@@ -104,7 +122,9 @@ export type IssueDataReduced =
   | RedmineIssue
   | TrelloIssueReduced
   | LinearIssueReduced
-  | ClickUpTaskReduced;
+  | ClickUpTaskReduced
+  | AzureDevOpsIssueReduced
+  | NextcloudDeckIssueReduced;
 
 export type IssueDataReducedMap = {
   [K in IssueProviderKey]: K extends 'JIRA'
@@ -129,7 +149,11 @@ export type IssueDataReducedMap = {
                       ? LinearIssueReduced
                       : K extends 'CLICKUP'
                         ? ClickUpTaskReduced
-                        : never;
+                        : K extends 'AZURE_DEVOPS'
+                          ? AzureDevOpsIssueReduced
+                          : K extends 'NEXTCLOUD_DECK'
+                            ? NextcloudDeckIssueReduced
+                            : never;
 };
 
 // TODO: add issue model to the IssueDataReducedMap
@@ -214,6 +238,14 @@ export interface IssueProviderClickUp extends IssueProviderBase, ClickUpCfg {
   issueProviderKey: 'CLICKUP';
 }
 
+export interface IssueProviderAzureDevOps extends IssueProviderBase, AzureDevOpsCfg {
+  issueProviderKey: 'AZURE_DEVOPS';
+}
+
+export interface IssueProviderNextcloudDeck extends IssueProviderBase, NextcloudDeckCfg {
+  issueProviderKey: 'NEXTCLOUD_DECK';
+}
+
 export type IssueProvider =
   | IssueProviderJira
   | IssueProviderGithub
@@ -225,7 +257,9 @@ export type IssueProvider =
   | IssueProviderRedmine
   | IssueProviderTrello
   | IssueProviderLinear
-  | IssueProviderClickUp;
+  | IssueProviderClickUp
+  | IssueProviderAzureDevOps
+  | IssueProviderNextcloudDeck;
 
 export type IssueProviderTypeMap<T extends IssueProviderKey> = T extends 'JIRA'
   ? IssueProviderJira
@@ -249,4 +283,8 @@ export type IssueProviderTypeMap<T extends IssueProviderKey> = T extends 'JIRA'
                     ? IssueProviderLinear
                     : T extends 'CLICKUP'
                       ? IssueProviderClickUp
-                      : never;
+                      : T extends 'AZURE_DEVOPS'
+                        ? IssueProviderAzureDevOps
+                        : T extends 'NEXTCLOUD_DECK'
+                          ? IssueProviderNextcloudDeck
+                          : never;

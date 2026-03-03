@@ -14,6 +14,7 @@ import {
 } from '@angular/material/menu';
 import { MatIconButton } from '@angular/material/button';
 import { NgTemplateOutlet } from '@angular/common';
+import { IS_TOUCH_PRIMARY } from '../../util/is-mouse-primary';
 
 @Component({
   selector: 'context-menu',
@@ -38,12 +39,17 @@ export class ContextMenuComponent implements OnInit {
     const tEl = this.rightClickTriggerEl();
     const el = tEl instanceof HTMLElement ? tEl : (tEl as any)._elementRef.nativeElement;
 
-    el.addEventListener('contextmenu', (ev) => {
-      this.openContextMenu(ev);
-    });
-    el.addEventListener('longPressIOS', (ev) => {
-      this.openContextMenu(ev);
-    });
+    // On touch devices, skip contextmenu/longpress listeners to avoid conflicting
+    // with cdkDragStartDelay. The context menu is still accessible via the
+    // leftClickTriggerEl (three-dots / more_vert button).
+    if (!IS_TOUCH_PRIMARY) {
+      el.addEventListener('contextmenu', (ev) => {
+        this.openContextMenu(ev);
+      });
+      el.addEventListener('longPressIOS', (ev) => {
+        this.openContextMenu(ev);
+      });
+    }
 
     const leftClickEl = this.leftClickTriggerEl();
     if (leftClickEl) {
@@ -83,8 +89,15 @@ export class ContextMenuComponent implements OnInit {
     event.stopPropagation();
     this.contextMenuPosition.x =
       ('touches' in event ? event.touches[0].clientX : event.clientX) + 'px';
-    this.contextMenuPosition.y =
-      ('touches' in event ? event.touches[0].clientY : event.clientY) + 'px';
+    const rawY = 'touches' in event ? event.touches[0].clientY : event.clientY;
+    const safeAreaTop =
+      parseInt(
+        getComputedStyle(document.documentElement).getPropertyValue(
+          '--safe-area-inset-top',
+        ),
+        10,
+      ) || 0;
+    this.contextMenuPosition.y = Math.max(rawY, safeAreaTop) + 'px';
     const contextMenuTriggerEl = this.contextMenuTriggerEl();
     contextMenuTriggerEl.menuData = {
       x: this.contextMenuPosition.x,

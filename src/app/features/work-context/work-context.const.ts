@@ -29,6 +29,7 @@ export const WORK_CONTEXT_DEFAULT_THEME: WorkContextThemeCfg = {
   hueWarn: '500',
   backgroundImageDark: null,
   backgroundImageLight: null,
+  backgroundOverlayOpacity: 20,
 };
 
 export const WORK_CONTEXT_DEFAULT_COMMON: WorkContextCommon = {
@@ -155,6 +156,29 @@ export const WORK_CONTEXT_THEME_CONFIG_FORM_CONFIG: ConfigFormSection<WorkContex
         templateOptions: {
           label: T.F.PROJECT.FORM_THEME.L_BACKGROUND_IMAGE_LIGHT,
           description: '* https://some/cool.jpg, file:///home/user/bg.png',
+        },
+      },
+      {
+        key: 'backgroundOverlayOpacity',
+        type: 'slider',
+        props: {
+          label: T.F.PROJECT.FORM_THEME.L_BACKGROUND_OVERLAY_OPACITY,
+          description: T.F.PROJECT.FORM_THEME.D_BACKGROUND_OVERLAY_OPACITY,
+          type: 'number',
+          min: 0,
+          max: 99,
+          required: false,
+          displayWith: (value: number): string => `${value}%`,
+        },
+        expressions: {
+          hide: (field: FormlyFieldConfig): boolean => {
+            const isDarkTheme = document.body.classList.contains('isDarkTheme');
+            // hide the setting if the active theme has no background image.
+            // avoids unnecessary rendering when changing opacity would have no effect.
+            return isDarkTheme
+              ? !field.model.backgroundImageDark
+              : !field.model.backgroundImageLight;
+          },
         },
       },
     ],

@@ -8,7 +8,10 @@ import {
   projectAdapter,
 } from '../../../features/project/store/project.reducer';
 import { TAG_FEATURE_NAME, tagAdapter } from '../../../features/tag/store/tag.reducer';
-import { plannerFeatureKey } from '../../../features/planner/store/planner.reducer';
+import {
+  plannerFeatureKey,
+  PlannerState,
+} from '../../../features/planner/store/planner.reducer';
 import { unique } from '../../../util/unique';
 import { TODAY_TAG } from '../../../features/tag/tag.const';
 
@@ -100,7 +103,10 @@ export const addTaskToList = (
   taskIds: string[],
   taskId: string,
   isAddToBottom: boolean,
-): string[] => (isAddToBottom ? [...taskIds, taskId] : [taskId, ...taskIds]);
+): string[] => {
+  if (taskIds.includes(taskId)) return taskIds;
+  return isAddToBottom ? [...taskIds, taskId] : [taskId, ...taskIds];
+};
 
 export const removeTasksFromList = (taskIds: string[], toRemove: string[]): string[] => {
   // Use Set for O(1) lookup instead of O(n) Array.includes
@@ -205,7 +211,9 @@ export const addTaskToPlannerDay = (
   day: string,
   position: number = 0,
 ): RootState => {
-  const plannerState = state[plannerFeatureKey as keyof RootState] as any;
+  const plannerState = state[
+    plannerFeatureKey as keyof RootState
+  ] as unknown as PlannerState;
   const daysCopy = { ...(plannerState?.days || {}) };
 
   // First remove from all days

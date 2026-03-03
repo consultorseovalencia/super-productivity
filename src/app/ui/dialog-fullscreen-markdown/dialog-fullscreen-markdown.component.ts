@@ -31,6 +31,8 @@ import * as MarkdownToolbar from '../inline-markdown/markdown-toolbar.util';
 import { ClipboardImageService } from '../../core/clipboard-image/clipboard-image.service';
 import { TaskAttachmentService } from '../../features/tasks/task-attachment/task-attachment.service';
 import { ClipboardPasteHandlerService } from '../../core/clipboard-image/clipboard-paste-handler.service';
+import { HISTORY_STATE } from 'src/app/app.constants';
+import { IS_MOBILE } from 'src/app/util/is-mobile';
 
 type ViewMode = 'SPLIT' | 'PARSED' | 'TEXT_ONLY';
 const ALL_VIEW_MODES: ['SPLIT', 'PARSED', 'TEXT_ONLY'] = ['SPLIT', 'PARSED', 'TEXT_ONLY'];
@@ -130,6 +132,16 @@ export class DialogFullscreenMarkdownComponent implements OnInit, AfterViewInit 
   }
 
   async ngOnInit(): Promise<void> {
+    // Push a fake state for our dialog in the history when it's displayed in fullscreen
+    if (IS_MOBILE) {
+      if (!window.history.state?.[HISTORY_STATE.DIALOG_FULLSCREEN_MARKDOWN]) {
+        window.history.pushState(
+          { [HISTORY_STATE.DIALOG_FULLSCREEN_MARKDOWN]: true },
+          '',
+        );
+      }
+    }
+
     // Update resolved content asynchronously for image processing
     if (this.data.content) {
       await this._updateResolvedContent(this.data.content);
@@ -167,8 +179,17 @@ export class DialogFullscreenMarkdownComponent implements OnInit, AfterViewInit 
     this._contentChanges$.next(content);
   }
 
-  close(): void {
-    this._matDialogRef.close(this.data?.content);
+  close(isSkipSave: boolean = false): void {
+    // When the "Close" button is hit by the user, the note is closed without saving.
+    if (isSkipSave) {
+      this._matDialogRef.close();
+      // When the note is made empty manually by the user and the "Save" button is hit, the note is automatically deleted instead of being left blank.
+    } else if (!this.data?.content && this.data.content.trim().length < 1) {
+      this._matDialogRef.close({ action: 'DELETE' });
+      // When the "Save" button is clicked by the user and the note has content, it will save.
+    } else {
+      this._matDialogRef.close(this.data?.content);
+    }
   }
 
   onViewModeChange(): void {

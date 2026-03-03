@@ -85,7 +85,10 @@ export class AddTaskBarIssueSearchService {
                       }) as AddTaskSuggestion,
                   ),
                 ),
-                catchError(() => of([])),
+                catchError((err) => {
+                  TaskLog.warn('Issue provider search failed', err);
+                  return of([]);
+                }),
               );
 
             return combineLatest([archivedTasksSearch$, issueSearch$]).pipe(
@@ -243,10 +246,12 @@ export class AddTaskBarIssueSearchService {
                     first(),
                     map((ctx) => ({
                       ...task,
-                      ctx: {
-                        ...ctx,
-                        icon: (ctx && ctx.icon) || null,
-                      },
+                      ctx: ctx
+                        ? {
+                            ...ctx,
+                            icon: ctx.icon || null,
+                          }
+                        : undefined,
                     })),
                   );
                 }),
@@ -270,7 +275,7 @@ export class AddTaskBarIssueSearchService {
 
   private async _getCtxForTaskSuggestion({
     projectId,
-  }: AddTaskSuggestion): Promise<Project> {
+  }: AddTaskSuggestion): Promise<Project | undefined> {
     return await this._projectService.getByIdOnce$(projectId).toPromise();
   }
 }

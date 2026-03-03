@@ -22,6 +22,7 @@ import {
   GlobalConfigSectionKey,
   GlobalConfigState,
   GlobalSectionConfig,
+  SyncConfig,
 } from '../../features/config/global-config.model';
 import { combineLatest, firstValueFrom, Observable, Subscription } from 'rxjs';
 import { ProjectCfgFormKey } from '../../features/project/project.model';
@@ -33,12 +34,13 @@ import { getAutomaticBackUpFormCfg } from '../../features/config/form-cfgs/autom
 import { getAppVersionStr } from '../../util/get-app-version-str';
 import { ConfigSectionComponent } from '../../features/config/config-section/config-section.component';
 import { ConfigSoundFormComponent } from '../../features/config/config-sound-form/config-sound-form.component';
-import { TranslatePipe } from '@ngx-translate/core';
+import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { SYNC_FORM } from '../../features/config/form-cfgs/sync-form.const';
 import { SyncProviderManager } from '../../op-log/sync-providers/provider-manager.service';
 import { map } from 'rxjs/operators';
 import { SyncConfigService } from '../../imex/sync/sync-config.service';
 import { WebdavApi } from '../../op-log/sync-providers/file-based/webdav/webdav-api';
+import { WebdavPrivateCfg } from '../../op-log/sync-providers/file-based/webdav/webdav.model';
 import { AsyncPipe } from '@angular/common';
 import { PluginManagementComponent } from '../../plugins/ui/plugin-management/plugin-management.component';
 import { PluginBridgeService } from '../../plugins/plugin-bridge.service';
@@ -54,7 +56,7 @@ import { UserProfileService } from '../../features/user-profile/user-profile.ser
 import { MatDialog } from '@angular/material/dialog';
 import { DialogDisableProfilesConfirmationComponent } from '../../features/user-profile/dialog-disable-profiles-confirmation/dialog-disable-profiles-confirmation.component';
 import { DialogRestorePointComponent } from '../../imex/sync/dialog-restore-point/dialog-restore-point.component';
-import { LegacySyncProvider } from '../../imex/sync/legacy-sync-provider.model';
+import { SyncProviderId } from '../../op-log/sync-providers/provider.const';
 import { DialogConfirmComponent } from '../../ui/dialog-confirm/dialog-confirm.component';
 import { LS } from '../../core/persistence/storage-keys.const';
 import { MatTab, MatTabGroup, MatTabLabel } from '@angular/material/tabs';
@@ -90,6 +92,7 @@ export class ConfigPageComponent implements OnInit, OnDestroy {
   private readonly _shareService = inject(ShareService);
   private readonly _userProfileService = inject(UserProfileService);
   private readonly _matDialog = inject(MatDialog);
+  private readonly _translateService = inject(TranslateService);
 
   readonly configService = inject(GlobalConfigService);
   readonly syncSettingsService = inject(SyncConfigService);
@@ -112,20 +115,20 @@ export class ConfigPageComponent implements OnInit, OnDestroy {
   globalCfg?: GlobalConfigState;
 
   appVersion: string = getAppVersionStr();
-  versions?: any = versions;
+  versions?: typeof versions = versions;
 
   // TODO needs to contain all sync providers....
   // TODO maybe handling this in an effect would be better????
-  syncFormCfg$: Observable<any> = combineLatest([
+  syncFormCfg$: Observable<Record<string, unknown>> = combineLatest([
     this._providerManager.currentProviderPrivateCfg$,
     this.configService.sync$,
   ]).pipe(
     map(([currentProviderCfg, syncCfg]) => {
       if (!currentProviderCfg) {
-        return syncCfg;
+        return syncCfg as unknown as Record<string, unknown>;
       }
       return {
-        ...syncCfg,
+        ...(syncCfg as unknown as Record<string, unknown>),
         [currentProviderCfg.providerId]: currentProviderCfg.privateCfg,
       };
     }),
@@ -266,8 +269,8 @@ export class ConfigPageComponent implements OnInit, OnDestroy {
               templateOptions: {
                 text: T.F.SYNC.FORM.WEB_DAV.L_TEST_CONNECTION,
                 required: false,
-                onClick: async (_field: any, _form: any, model: any) => {
-                  const webDavCfg = model;
+                onClick: async (_field: unknown, _form: unknown, model: unknown) => {
+                  const webDavCfg = model as WebdavPrivateCfg;
                   if (
                     !webDavCfg?.baseUrl ||
                     !webDavCfg?.userName ||
@@ -292,6 +295,18 @@ export class ConfigPageComponent implements OnInit, OnDestroy {
                         msg: T.F.SYNC.FORM.WEB_DAV.S_TEST_SUCCESS,
                         translateParams: { url: result.fullUrl },
                       });
+
+                      // Save settings after successful connection test.
+                      // Formly hierarchy: _field (button) -> parent (group wrapper) -> parent (root form) -> model
+                      const fullSyncModel = (
+                        _field as { parent?: { parent?: { model?: SyncConfig } } }
+                      )?.parent?.parent?.model;
+                      if (fullSyncModel) {
+                        await this.syncSettingsService.updateSettingsFromForm(
+                          fullSyncModel,
+                          true,
+                        );
+                      }
 
                       // Test conditional header support
                       const testPath = `${webDavCfg.syncFolderPath || '/'}/.sp-header-test-${Date.now()}`;
@@ -347,7 +362,7 @@ export class ConfigPageComponent implements OnInit, OnDestroy {
                       msg: T.F.SYNC.FORM.WEB_DAV.S_TEST_FAIL,
                       translateParams: {
                         error: e instanceof Error ? e.message : 'Unexpected error',
-                        url: webDavCfg.baseUrl || 'N/A',
+                        url: (webDavCfg.baseUrl as string) || 'N/A',
                       },
                     });
                   }
@@ -357,6 +372,122 @@ export class ConfigPageComponent implements OnInit, OnDestroy {
           ],
         };
       }
+
+      // Find the Dropbox fieldGroup and add the authentication button
+      if ((item as any).props?.dropboxAuth && item.fieldGroup) {
+        // Check if Dropbox is already authenticated
+        const dropboxProvider = this._providerManager.getProviderById(
+          SyncProviderId.Dropbox,
+        );
+
+        // We need to check auth status asynchronously, so we'll set initial state
+        // and update it when the form is rendered
+        let isAuthenticated = false;
+        dropboxProvider?.isReady().then((ready) => {
+          isAuthenticated = ready;
+          // Update the status field text after checking
+          const statusField = item.fieldGroup?.find(
+            (f: any) => f.key === 'authStatus',
+          ) as any;
+          if (statusField?.templateOptions) {
+            statusField.templateOptions.text = isAuthenticated
+              ? '✓ ' +
+                this._translateService.instant(T.F.SYNC.FORM.DROPBOX.STATUS_CONFIGURED)
+              : '⚠ ' +
+                this._translateService.instant(
+                  T.F.SYNC.FORM.DROPBOX.STATUS_NOT_CONFIGURED,
+                );
+          }
+        });
+
+        return {
+          ...item,
+          fieldGroup: [
+            ...item.fieldGroup,
+            {
+              type: 'btn',
+              className: 'mt3 block e2e-dropbox-auth-btn',
+              templateOptions: {
+                // Button text will be determined by checking if already authenticated
+                text: T.F.SYNC.FORM.DROPBOX.BTN_AUTHENTICATE,
+                btnType: 'primary',
+                onClick: async (_field: unknown, _form: unknown, model: unknown) => {
+                  try {
+                    // Check current auth status before opening dialog
+                    const isCurrentlyAuth = await dropboxProvider?.isReady();
+
+                    const result =
+                      await this._syncWrapperService.configuredAuthForSyncProviderIfNecessary(
+                        SyncProviderId.Dropbox,
+                        true, // force re-authentication even if already configured
+                      );
+
+                    if (result.wasConfigured) {
+                      this._snackService.open({
+                        type: 'SUCCESS',
+                        msg: isCurrentlyAuth
+                          ? T.F.SYNC.FORM.DROPBOX.REAUTH_SUCCESS
+                          : T.F.SYNC.FORM.DROPBOX.AUTH_SUCCESS,
+                      });
+
+                      // Update the status field to show configured
+                      const statusField = item.fieldGroup?.find(
+                        (f: any) => f.key === 'authStatus',
+                      ) as any;
+                      if (statusField?.templateOptions) {
+                        statusField.templateOptions.text =
+                          '✓ ' +
+                          this._translateService.instant(
+                            T.F.SYNC.FORM.DROPBOX.STATUS_CONFIGURED,
+                          );
+                      }
+
+                      // Update button text to "Re-authenticate"
+                      const btnField = _field as any;
+                      if (btnField?.templateOptions) {
+                        btnField.templateOptions.text =
+                          T.F.SYNC.FORM.DROPBOX.BTN_REAUTHENTICATE;
+                      }
+
+                      // Save the updated credentials to persist them
+                      const fullSyncModel = (
+                        _field as { parent?: { parent?: { model?: SyncConfig } } }
+                      )?.parent?.parent?.model;
+                      if (fullSyncModel) {
+                        await this.syncSettingsService.updateSettingsFromForm(
+                          fullSyncModel!,
+                          true,
+                        );
+                      }
+                    }
+                  } catch (e) {
+                    // Log error for debugging (storage failures, auth errors, etc.)
+                    Log.err('Dropbox authentication failed:', e);
+                    // Show user-friendly error with actual error message for context
+                    this._snackService.open({
+                      type: 'ERROR',
+                      msg: T.F.SYNC.S.INCOMPLETE_CFG,
+                      translateParams: {
+                        error: e instanceof Error ? e.message : String(e),
+                      },
+                    });
+                  }
+                },
+              },
+              hooks: {
+                // Update button text based on auth status when form initializes
+                onInit: async (field: any) => {
+                  const isAuth = await dropboxProvider?.isReady();
+                  if (field?.templateOptions && isAuth) {
+                    field.templateOptions.text = T.F.SYNC.FORM.DROPBOX.BTN_REAUTHENTICATE;
+                  }
+                },
+              },
+            },
+          ],
+        };
+      }
+
       return item;
     });
 
@@ -365,8 +496,8 @@ export class ConfigPageComponent implements OnInit, OnDestroy {
       items: [
         ...items,
         {
-          hideExpression: (m: any, _v: any, field: any) =>
-            !m.isEnabled || !field?.form?.valid,
+          hideExpression: (m: Record<string, unknown>, _v: unknown, field: unknown) =>
+            !m.isEnabled || !(field as { form?: { valid?: boolean } })?.form?.valid,
           type: 'btn',
           className: 'mt3 block',
           templateOptions: {
@@ -378,8 +509,8 @@ export class ConfigPageComponent implements OnInit, OnDestroy {
           },
         },
         {
-          hideExpression: (m: any, _v: any, field: any) =>
-            !m.isEnabled || !field?.form?.valid,
+          hideExpression: (m: Record<string, unknown>, _v: unknown, field: unknown) =>
+            !m.isEnabled || !(field as { form?: { valid?: boolean } })?.form?.valid,
           type: 'btn',
           className: 'mt2 block',
           templateOptions: {
@@ -392,8 +523,8 @@ export class ConfigPageComponent implements OnInit, OnDestroy {
           },
         },
         {
-          hideExpression: (m: any) =>
-            !m.isEnabled || m.syncProvider !== LegacySyncProvider.SuperSync,
+          hideExpression: (m: Record<string, unknown>) =>
+            !m.isEnabled || m.syncProvider !== SyncProviderId.SuperSync,
           type: 'btn',
           className: 'mt2 block',
           templateOptions: {
@@ -411,7 +542,7 @@ export class ConfigPageComponent implements OnInit, OnDestroy {
 
   async saveGlobalCfg($event: {
     sectionKey: GlobalConfigSectionKey | ProjectCfgFormKey;
-    config: any;
+    config: Record<string, unknown>;
   }): Promise<void> {
     const config = $event.config;
     const sectionKey = $event.sectionKey as GlobalConfigSectionKey;
@@ -469,7 +600,7 @@ export class ConfigPageComponent implements OnInit, OnDestroy {
   getGlobalCfgSection(
     sectionKey: GlobalConfigSectionKey | ProjectCfgFormKey,
   ): GlobalSectionConfig {
-    return (this.globalCfg as any)[sectionKey];
+    return (this.globalCfg as unknown as Record<string, GlobalSectionConfig>)[sectionKey];
   }
 
   async downloadLogs(): Promise<void> {

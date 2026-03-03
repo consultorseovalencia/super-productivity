@@ -6,11 +6,16 @@ import { sendLoginMagicLinkEmail } from './email';
 
 // Auth constants
 const MIN_JWT_SECRET_LENGTH = 32;
-const JWT_EXPIRY = '365d';
+
+// All JWT tokens live for 365 days regardless of authentication method.
+// The auth method (passkey, magic link) only matters during login —
+// once a JWT is issued, it represents a verified session.
+export const JWT_EXPIRY = '365d';
+
 const VERIFICATION_TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const LOGIN_MAGIC_LINK_EXPIRY_MS = 15 * 60 * 1000; // 15 minutes
 
-const getJwtSecret = (): string => {
+export const getJwtSecret = (): string => {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
     throw new Error(
@@ -113,14 +118,19 @@ export const verifyToken = async (
       });
     });
 
-    // Verify user exists and token version matches
+    // Verify user exists, is verified, and token version matches
     const user = await prisma.user.findUnique({
       where: { id: payload.userId },
-      select: { id: true, tokenVersion: true },
+      select: { id: true, tokenVersion: true, isVerified: true },
     });
 
     if (!user) {
       Logger.warn(`Token verification failed: User ${payload.userId} not found in DB`);
+      return null;
+    }
+
+    if (!user.isVerified) {
+      Logger.warn(`Token verification failed: User ${payload.userId} is not verified`);
       return null;
     }
 

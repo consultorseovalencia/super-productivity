@@ -120,7 +120,7 @@ export class TagPage extends BasePage {
       await tagNameInput.waitFor({ state: 'hidden', timeout: 3000 });
     }
 
-    // Wait for all overlays to close to ensure clean state for next operation
+    // Close the toggle menu (it stays open for multi-tag selection) and wait for cleanup
     await this.ensureOverlaysClosed();
 
     // Wait for the tag to actually appear on the task

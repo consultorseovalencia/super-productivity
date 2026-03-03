@@ -23,6 +23,8 @@ import { FormlyTagSelectionComponent } from './formly-tag-selection/formly-tag-s
 import { FormlyBtnComponent } from './formly-button/formly-btn.component';
 import { FormlyImageInputComponent } from './formly-image-input/formly-image-input.component';
 import { ColorInputComponent } from '../features/config/color-input/color-input.component';
+import { FormlySlideToggleComponent } from './formly-slide-toggle/formly-slide-toggle.component';
+import { FormlyDatePickerComponent } from './formly-date-picker/formly-date-picker.component';
 
 @NgModule({
   imports: [
@@ -42,6 +44,7 @@ import { ColorInputComponent } from '../features/config/color-input/color-input.
       types: [
         { name: 'slider', component: FormlySliderComponent },
         { name: 'link', component: FormlyLinkWidgetComponent },
+        { name: 'slide-toggle', component: FormlySlideToggleComponent },
         {
           name: 'duration',
           component: InputDurationFormlyComponent,
@@ -94,6 +97,10 @@ import { ColorInputComponent } from '../features/config/color-input/color-input.
           extends: 'input',
           wrappers: ['form-field'],
         },
+        {
+          name: 'date',
+          component: FormlyDatePickerComponent,
+        },
       ],
       extras: {
         immutable: true,
@@ -109,11 +116,11 @@ import { ColorInputComponent } from '../features/config/color-input/color-input.
     }),
     FormlyMatToggleModule,
     FormlyMaterialModule,
-    FormlyMatDatepickerModule,
     // my modules
     // might be needed for formly to pick up on directives
     ValidationModule,
     FormlyLinkWidgetComponent,
+    FormlyMatDatepickerModule,
   ],
   exports: [
     FormlyMaterialModule,

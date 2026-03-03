@@ -28,7 +28,9 @@ import { ActionType } from '../../../../op-log/core/action-types.enum';
  * - U = Plugin
  * - H = Task Shared (multi-entity actions)
  *
- * IMPORTANT: Never change assigned codes - add new codes for new actions.
+ * WARNING: NEVER change or reassign existing codes. They are persisted in IndexedDB
+ * and used for sync. Changing a code will corrupt stored operations and break
+ * deserialization. Only add NEW codes for NEW actions.
  */
 
 export const ACTION_TYPE_TO_CODE: Record<ActionType, string> = {
@@ -163,6 +165,7 @@ export const ACTION_TYPE_TO_CODE: Record<ActionType, string> = {
   [ActionType.COUNTER_SET_ON]: 'SN',
   [ActionType.COUNTER_SET_FOR_DATE]: 'SFD',
   [ActionType.COUNTER_SYNC_TIME]: 'SC',
+  [ActionType.COUNTER_UPDATE_ORDER]: 'SM',
 
   // Task actions (T)
   [ActionType.TASK_UPDATE_MULTIPLE_SIMPLE]: 'TU',

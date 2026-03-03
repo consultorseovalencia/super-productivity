@@ -1,7 +1,7 @@
 import { FormlyFieldConfig } from '@ngx-formly/core';
 
 import { LanguageCode, DateTimeLocale } from '../../core/locale.constants';
-import { LegacySyncProvider } from '../../imex/sync/legacy-sync-provider.model';
+import { SyncProviderId } from '../../op-log/sync-providers/provider.const';
 import { ProjectCfgFormKey } from '../project/project.model';
 import { KeyboardConfig } from './keyboard-config.model';
 import { TaskReminderOptionId } from '../tasks/task.model';
@@ -16,6 +16,7 @@ export type AppFeaturesConfig = Readonly<{
   isIssuesPanelEnabled: boolean;
   isProjectNotesEnabled: boolean;
   isSyncIconEnabled: boolean;
+  isSearchEnabled: boolean;
   isDonatePageEnabled: boolean;
   isEnableUserProfiles: boolean;
   isHabitsEnabled: boolean;
@@ -61,10 +62,10 @@ export type ShortSyntaxConfig = Readonly<{
   isEnableProject: boolean;
   isEnableDue: boolean;
   isEnableTag: boolean;
+  urlBehavior?: 'keep' | 'extract' | 'keep-and-attach';
 }>;
 
 export type TimeTrackingConfig = Readonly<{
-  trackingInterval?: number | null;
   defaultEstimate?: number | null;
   defaultEstimateSubTasks?: number | null;
   isAutoStartNextTask: boolean;
@@ -162,8 +163,7 @@ export type SyncConfig = Readonly<{
   isEnabled: boolean;
   isEncryptionEnabled?: boolean;
   isCompressionEnabled?: boolean;
-  // TODO migrate to SyncProviderId
-  syncProvider: LegacySyncProvider | null;
+  syncProvider: SyncProviderId | null;
   syncInterval: number;
   isManualSyncOnly?: boolean;
 
@@ -280,7 +280,6 @@ export interface LimitedFormlyFieldConfig<FormModel> extends Omit<
 export type CustomCfgSection =
   | 'FILE_IMPORT_EXPORT'
   | 'JIRA_CFG'
-  | 'SIMPLE_COUNTER_CFG'
   | 'OPENPROJECT_CFG'
   | 'CLICKUP_CFG'
   | 'CLIPBOARD_IMAGES_CFG';

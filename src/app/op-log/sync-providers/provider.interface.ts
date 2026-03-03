@@ -106,6 +106,12 @@ export interface SyncProviderServiceInterface<PID extends SyncProviderId> {
    * @param privateCfg New configuration to store
    */
   setPrivateCfg(privateCfg: PrivateCfgByProviderId<PID>): Promise<void>;
+
+  /**
+   * Clears authentication credentials while preserving non-auth config (e.g., encryptKey).
+   * Called when auth errors occur to ensure re-auth flow can proceed.
+   */
+  clearAuthCredentials?(): Promise<void>;
 }
 
 /**
@@ -239,14 +245,12 @@ export interface OperationSyncCapable {
    * Upload operations to the server
    * @param ops Operations to upload
    * @param clientId Client identifier
-   * @param lastKnownServerSeq Last known server sequence (for piggyback download)
-   * @param isCleanSlate If true, server deletes all user data before accepting ops
+   * @param lastKnownServerSeq Last known server sequence
    */
   uploadOps(
     ops: SyncOperation[],
     clientId: string,
     lastKnownServerSeq?: number,
-    isCleanSlate?: boolean,
   ): Promise<OpUploadResponse>;
 
   /**

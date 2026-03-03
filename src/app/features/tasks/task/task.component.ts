@@ -38,6 +38,7 @@ import { swirlAnimation } from '../../../ui/animations/swirl-in-out.ani';
 import { DialogEditTaskRepeatCfgComponent } from '../../task-repeat-cfg/dialog-edit-task-repeat-cfg/dialog-edit-task-repeat-cfg.component';
 import { ProjectService } from '../../project/project.service';
 import { Project } from '../../project/project.model';
+import { _MISSING_PROJECT_ } from '../../project/project.const';
 import { T } from '../../../t.const';
 import {
   MatMenu,
@@ -50,8 +51,8 @@ import { throttle } from '../../../util/decorators';
 import { TaskRepeatCfgService } from '../../task-repeat-cfg/task-repeat-cfg.service';
 import { DialogConfirmComponent } from '../../../ui/dialog-confirm/dialog-confirm.component';
 import { Update } from '@ngrx/entity';
-import { isToday } from '../../../util/is-today.util';
 import { getDbDateStr } from '../../../util/get-db-date-str';
+import { DateService } from '../../../core/date/date.service';
 import { IS_TOUCH_PRIMARY } from '../../../util/is-mouse-primary';
 import { KeyboardConfig } from '../../config/keyboard-config.model';
 import { DialogScheduleTaskComponent } from '../../planner/dialog-schedule-task/dialog-schedule-task.component';
@@ -135,6 +136,7 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
   private readonly _store = inject(Store);
   private readonly _projectService = inject(ProjectService);
   private readonly _taskFocusService = inject(TaskFocusService);
+  private readonly _dateService = inject(DateService);
   private readonly _destroyRef = inject(DestroyRef);
 
   readonly workContextService = inject(WorkContextService);
@@ -175,24 +177,28 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
   isTodayListActive = computed(() => this.workContextService.isTodayList);
   taskIdWithPrefix = computed(() => 't-' + this.task().id);
   isRepeatTaskCreatedToday = computed(
-    () => !!(this.task().repeatCfgId && isToday(this.task().created)),
+    () => !!(this.task().repeatCfgId && this._dateService.isToday(this.task().created)),
   );
   isOverdue = computed(() => {
     const t = this.task();
+    const todayStr = this.globalTrackingIntervalService.todayDateStr();
     return (
       !t.isDone &&
-      ((t.dueWithTime && t.dueWithTime < Date.now()) ||
+      ((t.dueWithTime &&
+        !this._dateService.isToday(t.dueWithTime) &&
+        t.dueWithTime < Date.now()) ||
         // Note: String comparison works correctly here because dueDay is in YYYY-MM-DD format
         // which is lexicographically sortable. This avoids timezone conversion issues that occur
         // when creating Date objects from date strings.
-        (t.dueDay && t.dueDay !== getDbDateStr() && t.dueDay < getDbDateStr()))
+        (t.dueDay && t.dueDay !== todayStr && t.dueDay < todayStr))
     );
   });
   isScheduledToday = computed(() => {
     const t = this.task();
+    const todayStr = this.globalTrackingIntervalService.todayDateStr();
     return (
-      (t.dueWithTime && isToday(t.dueWithTime)) ||
-      (t.dueDay && t.dueDay === this.globalTrackingIntervalService.todayDateStr())
+      (t.dueWithTime && this._dateService.isToday(t.dueWithTime)) ||
+      (t.dueDay && t.dueDay === todayStr)
     );
   });
 
@@ -222,11 +228,11 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
     const task = this.task();
     const todayStr = this.globalTrackingIntervalService.todayDateStr();
     return this.isTodayListActive()
-      ? (task.dueWithTime && !isToday(task.dueWithTime)) ||
+      ? (task.dueWithTime && !this._dateService.isToday(task.dueWithTime)) ||
           (task.dueDay && task.dueDay !== todayStr)
       : !this.isShowRemoveFromToday() &&
           task.dueDay !== todayStr &&
-          (!task.dueWithTime || !isToday(task.dueWithTime));
+          (!task.dueWithTime || !this._dateService.isToday(task.dueWithTime));
   });
 
   isPanHelperVisible = signal(false);
@@ -285,6 +291,16 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
   @HostListener('focus') onFocus(): void {
     this._taskFocusService.focusedTaskId.set(this.task().id);
     this._taskFocusService.lastFocusedTaskComponent.set(this);
+
+    // If detail panel is open for another task, update it to show this task (#6578)
+    // Skip if this task is inside the detail panel (e.g. subtask list)
+    if (this._elementRef.nativeElement.closest('task-detail-panel')) {
+      return;
+    }
+    const selectedTaskId = this._taskService.selectedTaskId();
+    if (selectedTaskId && selectedTaskId !== this.task().id) {
+      this._taskService.setSelectedId(this.task().id);
+    }
   }
 
   @HostListener('blur') onBlur(): void {
@@ -960,7 +976,7 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
                     okTxt: T.F.TASK_REPEAT.D_CONFIRM_MOVE_TO_PROJECT.OK,
                     message: T.F.TASK_REPEAT.D_CONFIRM_MOVE_TO_PROJECT.MSG,
                     translateParams: {
-                      projectName: targetProject.title,
+                      projectName: targetProject?.title ?? _MISSING_PROJECT_,
                       tasksNr:
                         nonArchiveInstancesWithSubTasks.length + archiveInstances.length,
                     },

@@ -4,20 +4,22 @@ import { SyncProviderManager } from '../../op-log/sync-providers/provider-manage
 import { GlobalConfigService } from '../../features/config/global-config.service';
 import { BehaviorSubject } from 'rxjs';
 import { SyncConfig } from '../../features/config/global-config.model';
-import { LegacySyncProvider } from './legacy-sync-provider.model';
-import { SyncProviderId } from '../../op-log/sync-exports';
+import { SyncProviderId } from '../../op-log/sync-providers/provider.const';
 import { DEFAULT_GLOBAL_CONFIG } from '../../features/config/default-global-config.const';
 import { first } from 'rxjs/operators';
 import { WrappedProviderService } from '../../op-log/sync-providers/wrapped-provider.service';
+import { SyncWrapperService } from './sync-wrapper.service';
 
 describe('SyncConfigService', () => {
   let service: SyncConfigService;
   let providerManager: jasmine.SpyObj<SyncProviderManager>;
   let mockSyncConfig$: BehaviorSubject<SyncConfig>;
   let mockCurrentProviderPrivateCfg$: BehaviorSubject<any>;
+  let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
     // Mock fetch for the sync-config-default-override.json
+    originalFetch = globalThis.fetch;
     // @ts-ignore - fetch might not exist in test environment
     globalThis.fetch = jasmine.createSpy('fetch').and.returnValue(
       Promise.resolve({
@@ -29,7 +31,7 @@ describe('SyncConfigService', () => {
     mockSyncConfig$ = new BehaviorSubject<SyncConfig>({
       ...DEFAULT_GLOBAL_CONFIG.sync,
       isEnabled: true,
-      syncProvider: LegacySyncProvider.LocalFile,
+      syncProvider: SyncProviderId.LocalFile,
       isEncryptionEnabled: true,
     });
 
@@ -55,12 +57,17 @@ describe('SyncConfigService', () => {
       'clearCache',
     ]);
 
+    const syncWrapperServiceSpy = jasmine.createSpyObj('SyncWrapperService', [
+      'clearEncryptionDialogSuppression',
+    ]);
+
     TestBed.configureTestingModule({
       providers: [
         SyncConfigService,
         { provide: SyncProviderManager, useValue: providerManagerSpy },
         { provide: GlobalConfigService, useValue: globalConfigServiceSpy },
         { provide: WrappedProviderService, useValue: wrappedProviderServiceSpy },
+        { provide: SyncWrapperService, useValue: syncWrapperServiceSpy },
       ],
     });
 
@@ -68,6 +75,10 @@ describe('SyncConfigService', () => {
     providerManager = TestBed.inject(
       SyncProviderManager,
     ) as jasmine.SpyObj<SyncProviderManager>;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
   });
 
   describe('updateSettingsFromForm', () => {
@@ -78,7 +89,7 @@ describe('SyncConfigService', () => {
 
       const settings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.WebDAV,
+        syncProvider: SyncProviderId.WebDAV,
         syncInterval: 300000,
         isEncryptionEnabled: true,
         encryptKey: 'secret-key',
@@ -95,7 +106,7 @@ describe('SyncConfigService', () => {
       // Should only pass non-private data to global config
       expect(globalConfigService.updateSection).toHaveBeenCalledWith('sync', {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.WebDAV,
+        syncProvider: SyncProviderId.WebDAV,
         syncInterval: 300000,
         isEncryptionEnabled: true,
       });
@@ -122,7 +133,7 @@ describe('SyncConfigService', () => {
 
       const settings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.WebDAV,
+        syncProvider: SyncProviderId.WebDAV,
         syncInterval: 300000,
         isEncryptionEnabled: true,
         encryptKey: 'test-key',
@@ -152,7 +163,7 @@ describe('SyncConfigService', () => {
 
       const settings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.LocalFile,
+        syncProvider: SyncProviderId.LocalFile,
         syncInterval: 300000,
         isEncryptionEnabled: true,
         encryptKey: 'test-key',
@@ -191,7 +202,7 @@ describe('SyncConfigService', () => {
 
       const settings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.Dropbox,
+        syncProvider: SyncProviderId.Dropbox,
         syncInterval: 300000,
         isEncryptionEnabled: true,
         encryptKey: 'dropbox-key',
@@ -232,7 +243,7 @@ describe('SyncConfigService', () => {
       // Update settings without changing the provider
       const settings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.Dropbox,
+        syncProvider: SyncProviderId.Dropbox,
         syncInterval: 600000, // Changed interval
         isEncryptionEnabled: true,
         encryptKey: 'existing-key', // Same key
@@ -277,7 +288,7 @@ describe('SyncConfigService', () => {
       // Form only provides baseUrl, accessToken is empty string (reset by Formly)
       const settings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.SuperSync,
+        syncProvider: SyncProviderId.SuperSync,
         syncInterval: 600000, // Changed interval (unrelated setting)
         superSync: {
           baseUrl: existingBaseUrl,
@@ -318,7 +329,7 @@ describe('SyncConfigService', () => {
 
       const settings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.SuperSync,
+        syncProvider: SyncProviderId.SuperSync,
         syncInterval: 300000,
         superSync: {
           baseUrl: 'https://example.com',
@@ -360,7 +371,7 @@ describe('SyncConfigService', () => {
       // Form provides empty password (e.g., from resetOnHide or form state issue)
       const settings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.WebDAV,
+        syncProvider: SyncProviderId.WebDAV,
         syncInterval: 600000,
         webDav: {
           baseUrl: 'https://webdav.example.com',
@@ -400,7 +411,7 @@ describe('SyncConfigService', () => {
       // User explicitly disables encryption (false should be respected)
       const settings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.SuperSync,
+        syncProvider: SyncProviderId.SuperSync,
         syncInterval: 300000,
         superSync: {
           baseUrl: 'https://example.com',
@@ -440,7 +451,7 @@ describe('SyncConfigService', () => {
       // Form provides only baseUrl, all other fields empty
       const settings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.WebDAV,
+        syncProvider: SyncProviderId.WebDAV,
         syncInterval: 300000,
         webDav: {
           baseUrl: 'https://webdav.example.com',
@@ -484,7 +495,7 @@ describe('SyncConfigService', () => {
 
       const settings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.WebDAV,
+        syncProvider: SyncProviderId.WebDAV,
         syncInterval: 300000,
         webDav: {
           baseUrl: 'https://new.example.com', // Updated
@@ -527,7 +538,7 @@ describe('SyncConfigService', () => {
       // Form provides empty path
       const settings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.LocalFile,
+        syncProvider: SyncProviderId.LocalFile,
         syncInterval: 600000,
         localFileSync: {
           syncFolderPath: '', // Empty - should not overwrite
@@ -556,7 +567,7 @@ describe('SyncConfigService', () => {
 
       const settings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.WebDAV,
+        syncProvider: SyncProviderId.WebDAV,
         syncInterval: 300000,
         isEncryptionEnabled: false,
         webDav: {
@@ -580,6 +591,37 @@ describe('SyncConfigService', () => {
       expect(providerManager.setProviderConfig).toHaveBeenCalledTimes(2);
     });
 
+    it('should deduplicate when syncSettingsForm$ emits before Formly modelChange', async () => {
+      // Mock provider for the test
+      (providerManager.getProviderById as jasmine.Spy).and.returnValue({
+        id: SyncProviderId.WebDAV,
+        privateCfg: {
+          load: jasmine.createSpy('load').and.returnValue(Promise.resolve({})),
+        },
+      });
+
+      // Simulate syncSettingsForm$ emission by pushing provider config
+      mockCurrentProviderPrivateCfg$.next({
+        providerId: SyncProviderId.WebDAV,
+        privateCfg: {
+          baseUrl: 'https://example.com',
+          userName: 'user',
+          password: 'pass',
+          syncFolderPath: '/sync',
+          encryptKey: 'key',
+        },
+      });
+
+      // Capture the actual emitted value from syncSettingsForm$
+      const emittedSettings = await service.syncSettingsForm$.pipe(first()).toPromise();
+
+      // Now simulate Formly modelChange with the exact same emitted value
+      await service.updateSettingsFromForm(emittedSettings!);
+
+      // Should NOT have called setProviderConfig since _lastSettings matches
+      expect(providerManager.setProviderConfig).not.toHaveBeenCalled();
+    });
+
     it('should not save private config when no provider is selected', async () => {
       const settings: SyncConfig = {
         isEnabled: false,
@@ -599,7 +641,7 @@ describe('SyncConfigService', () => {
 
       const settings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.WebDAV,
+        syncProvider: SyncProviderId.WebDAV,
         syncInterval: 300000,
         isEncryptionEnabled: true,
         encryptKey: 'new-key',
@@ -634,7 +676,7 @@ describe('SyncConfigService', () => {
 
       const initialSettings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.LocalFile,
+        syncProvider: SyncProviderId.LocalFile,
         syncInterval: 300000,
         isEncryptionEnabled: true,
         encryptKey: 'my-secret-password',
@@ -665,7 +707,7 @@ describe('SyncConfigService', () => {
       mockSyncConfig$.next({
         ...DEFAULT_GLOBAL_CONFIG.sync,
         isEnabled: true,
-        syncProvider: LegacySyncProvider.LocalFile,
+        syncProvider: SyncProviderId.LocalFile,
         isEncryptionEnabled: true,
         syncInterval: 300000,
       });
@@ -688,7 +730,7 @@ describe('SyncConfigService', () => {
       // Step 1: Simulate initial setup - user enables encryption
       const initialSettings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.LocalFile,
+        syncProvider: SyncProviderId.LocalFile,
         syncInterval: 300000,
         isEncryptionEnabled: true,
         encryptKey: 'test-password-123',
@@ -708,7 +750,7 @@ describe('SyncConfigService', () => {
       mockSyncConfig$.next({
         ...DEFAULT_GLOBAL_CONFIG.sync,
         isEnabled: true,
-        syncProvider: LegacySyncProvider.LocalFile,
+        syncProvider: SyncProviderId.LocalFile,
         isEncryptionEnabled: true, // This is saved correctly
         syncInterval: 300000,
       });
@@ -733,7 +775,7 @@ describe('SyncConfigService', () => {
       mockSyncConfig$.next({
         ...DEFAULT_GLOBAL_CONFIG.sync,
         isEnabled: true,
-        syncProvider: LegacySyncProvider.LocalFile,
+        syncProvider: SyncProviderId.LocalFile,
         isEncryptionEnabled: false, // Encryption is disabled
         syncInterval: 300000,
       });
@@ -751,7 +793,7 @@ describe('SyncConfigService', () => {
       // Ensure our fix doesn't break other providers
       const webDavSettings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.WebDAV,
+        syncProvider: SyncProviderId.WebDAV,
         syncInterval: 300000,
         isEncryptionEnabled: true,
         encryptKey: 'webdav-password',
@@ -793,7 +835,7 @@ describe('SyncConfigService', () => {
       // Step 1: User enables LocalFile sync with encryption
       const newSettings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.LocalFile,
+        syncProvider: SyncProviderId.LocalFile,
         syncInterval: 300000,
         isEncryptionEnabled: true,
         encryptKey: 'test-password-123',
@@ -849,7 +891,7 @@ describe('SyncConfigService', () => {
       mockSyncConfig$.next({
         ...DEFAULT_GLOBAL_CONFIG.sync,
         isEnabled: true,
-        syncProvider: LegacySyncProvider.LocalFile,
+        syncProvider: SyncProviderId.LocalFile,
         isEncryptionEnabled: true,
         syncInterval: 300000,
       });
@@ -877,7 +919,7 @@ describe('SyncConfigService', () => {
       mockSyncConfig$.next({
         ...DEFAULT_GLOBAL_CONFIG.sync,
         isEnabled: true,
-        syncProvider: LegacySyncProvider.LocalFile,
+        syncProvider: SyncProviderId.LocalFile,
         isEncryptionEnabled: true,
         syncInterval: 300000,
       });
@@ -933,7 +975,7 @@ describe('SyncConfigService', () => {
       mockSyncConfig$.next({
         ...DEFAULT_GLOBAL_CONFIG.sync,
         isEnabled: true,
-        syncProvider: LegacySyncProvider.SuperSync,
+        syncProvider: SyncProviderId.SuperSync,
         superSync: {
           baseUrl: customUrl,
         },
@@ -1037,6 +1079,39 @@ describe('SyncConfigService', () => {
       ).calls.mostRecent().args[1];
       expect(callArgs.encryptKey).toBe('newpass');
       expect(callArgs.isEncryptionEnabled).toBeUndefined();
+    });
+
+    it('should not dispatch persistent global config action when updating password', async () => {
+      const globalConfigService = TestBed.inject(
+        GlobalConfigService,
+      ) as jasmine.SpyObj<GlobalConfigService>;
+      globalConfigService.updateSection.calls.reset();
+
+      const mockProvider = {
+        id: SyncProviderId.SuperSync,
+        privateCfg: {
+          load: jasmine.createSpy('load').and.returnValue(
+            Promise.resolve({
+              baseUrl: 'http://test.com',
+              userName: 'test',
+              password: 'test',
+              accessToken: 'token',
+              syncFolderPath: '/',
+              encryptKey: 'oldpass',
+              isEncryptionEnabled: false,
+            }),
+          ),
+        },
+      };
+      (providerManager.getProviderById as jasmine.Spy).and.returnValue(mockProvider);
+      (providerManager.getActiveProvider as jasmine.Spy).and.returnValue(mockProvider);
+
+      await service.updateEncryptionPassword('newpass', SyncProviderId.SuperSync);
+
+      // Must NOT dispatch a persistent global config update - this caused the
+      // encryption password change cascade bug where other clients couldn't
+      // decrypt the operation and got stuck in a decrypt error loop
+      expect(globalConfigService.updateSection).not.toHaveBeenCalled();
     });
 
     it('should preserve existing config when updating password', async () => {
@@ -1314,7 +1389,7 @@ describe('SyncConfigService', () => {
       // Simulate form update with NO encryptKey (stale form model)
       const formSettings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.SuperSync,
+        syncProvider: SyncProviderId.SuperSync,
         syncInterval: 300000,
         isEncryptionEnabled: true,
         encryptKey: '', // Empty - simulating stale form model
@@ -1362,7 +1437,7 @@ describe('SyncConfigService', () => {
       // Simulate form update with OLD password (stale form model from before dialog)
       const formSettings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.SuperSync,
+        syncProvider: SyncProviderId.SuperSync,
         syncInterval: 300000,
         isEncryptionEnabled: true,
         encryptKey: oldPassword, // Old - simulating stale form model
@@ -1409,7 +1484,7 @@ describe('SyncConfigService', () => {
       const newFormPassword = 'new-webdav-password';
       const formSettings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.WebDAV,
+        syncProvider: SyncProviderId.WebDAV,
         syncInterval: 300000,
         isEncryptionEnabled: true,
         encryptKey: newFormPassword, // New password from form
@@ -1449,7 +1524,7 @@ describe('SyncConfigService', () => {
       // Simulate form update with password in settings.encryptKey (legacy path)
       const formSettings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.WebDAV,
+        syncProvider: SyncProviderId.WebDAV,
         syncInterval: 300000,
         isEncryptionEnabled: true,
         encryptKey: 'settings-level-password', // Password at settings level
@@ -1496,7 +1571,7 @@ describe('SyncConfigService', () => {
 
       const formSettings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.SuperSync,
+        syncProvider: SyncProviderId.SuperSync,
         syncInterval: 300000,
         isEncryptionEnabled: false,
         encryptKey: '',
@@ -1550,7 +1625,7 @@ describe('SyncConfigService', () => {
       // from BEFORE the dialog updated the password
       const staleFormSettings: SyncConfig = {
         isEnabled: true,
-        syncProvider: LegacySyncProvider.SuperSync,
+        syncProvider: SyncProviderId.SuperSync,
         syncInterval: 300000,
         isEncryptionEnabled: true,
         encryptKey: '', // STALE: Form model didn't have the new password

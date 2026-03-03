@@ -34,7 +34,7 @@ import { WorkContextService } from './features/work-context/work-context.service
 import { ImexViewService } from './imex/imex-meta/imex-view.service';
 import { SyncTriggerService } from './imex/sync/sync-trigger.service';
 import { ActivatedRoute, RouterOutlet } from '@angular/router';
-import { filter, map, take } from 'rxjs/operators';
+import { filter, map, switchMap, take } from 'rxjs/operators';
 import { isOnline$ } from './util/is-online';
 import { IS_MOBILE } from './util/is-mobile';
 import { warpAnimation, warpInAnimation } from './ui/animations/warp.ani';
@@ -183,6 +183,11 @@ export class AppComponent implements OnDestroy, AfterViewInit {
 
   private readonly _activeWorkContextId = toSignal(
     this.workContextService.activeWorkContextId$,
+    { initialValue: null },
+  );
+
+  private readonly _activeWorkContext = toSignal(
+    this.workContextService.activeWorkContext$,
     { initialValue: null },
   );
 
@@ -344,52 +349,63 @@ export class AppComponent implements OnDestroy, AfterViewInit {
     this.layoutService.setPendingFocusTaskId(taskId);
   }
 
+  readonly bgOverlayOpacity = computed((): number => {
+    const context = this._activeWorkContext();
+    const baseOpacity = context?.theme?.backgroundOverlayOpacity ?? 20;
+
+    return baseOpacity * 0.01;
+  });
+
   changeBackgroundFromUnsplash(): void {
     const dialogRef = this._matDialog.open(DialogUnsplashPickerComponent, {
       width: '900px',
       maxWidth: '95vw',
     });
 
-    dialogRef.afterClosed().subscribe((result) => {
-      if (result) {
-        // Get current work context
-        this.workContextService.activeWorkContext$
-          .pipe(take(1))
-          .subscribe((activeContext) => {
-            if (!activeContext) {
-              this._snackService.open({
-                type: 'ERROR',
-                msg: 'No active work context',
-              });
-              return;
-            }
-
-            // Extract the URL from the result object
-            const backgroundUrl = result.url || result;
-            const isDarkMode = this._globalThemeService.isDarkTheme();
-            const contextKey: keyof WorkContextThemeCfg = isDarkMode
-              ? 'backgroundImageDark'
-              : 'backgroundImageLight';
-
-            // Update the theme based on context type
-            if (activeContext.type === 'PROJECT') {
-              this._projectService.update(activeContext.id, {
-                theme: {
-                  ...(activeContext.theme || {}),
-                  [contextKey]: backgroundUrl,
-                },
-              });
-            } else if (activeContext.type === 'TAG') {
-              this._tagService.updateTag(activeContext.id, {
-                theme: {
-                  ...(activeContext.theme || {}),
-                  [contextKey]: backgroundUrl,
-                },
-              });
-            }
+    dialogRef
+      .afterClosed()
+      .pipe(
+        filter((result) => !!result),
+        switchMap((result) =>
+          this.workContextService.activeWorkContext$.pipe(
+            take(1),
+            map((activeContext) => ({ result, activeContext })),
+          ),
+        ),
+      )
+      .subscribe(({ result, activeContext }) => {
+        if (!activeContext) {
+          this._snackService.open({
+            type: 'ERROR',
+            msg: 'No active work context',
           });
-      }
-    });
+          return;
+        }
+
+        // Extract the URL from the result object
+        const backgroundUrl = result.url || result;
+        const isDarkMode = this._globalThemeService.isDarkTheme();
+        const contextKey: keyof WorkContextThemeCfg = isDarkMode
+          ? 'backgroundImageDark'
+          : 'backgroundImageLight';
+
+        // Update the theme based on context type
+        if (activeContext.type === 'PROJECT') {
+          this._projectService.update(activeContext.id, {
+            theme: {
+              ...(activeContext.theme || {}),
+              [contextKey]: backgroundUrl,
+            },
+          });
+        } else if (activeContext.type === 'TAG') {
+          this._tagService.updateTag(activeContext.id, {
+            theme: {
+              ...(activeContext.theme || {}),
+              [contextKey]: backgroundUrl,
+            },
+          });
+        }
+      });
   }
 
   ngAfterViewInit(): void {

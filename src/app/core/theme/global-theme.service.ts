@@ -34,6 +34,8 @@ import { CapacitorPlatformService } from '../platform/capacitor-platform.service
 import { Keyboard, KeyboardInfo } from '@capacitor/keyboard';
 import { PluginListenerHandle } from '@capacitor/core';
 import { StatusBar, Style } from '@capacitor/status-bar';
+import { SafeArea } from 'capacitor-plugin-safe-area';
+import { FlexibleConnectedPositionStrategy } from '@angular/cdk/overlay';
 import { LS } from '../persistence/storage-keys.const';
 import { CustomThemeService } from './custom-theme.service';
 import { Log } from '../log';
@@ -175,6 +177,8 @@ export class GlobalThemeService {
       ['tomorrow', 'assets/icons/tomorrow.svg'],
       ['next_week', 'assets/icons/next-week.svg'],
       ['habit', 'assets/icons/habit.svg'],
+      ['azure_devops', 'assets/icons/azure_devops.svg'],
+      ['nextcloud_deck', 'assets/icons/nextcloud_deck.svg'],
     ];
 
     // todo test if can be removed with airplane mode and wifi without internet
@@ -284,11 +288,12 @@ export class GlobalThemeService {
     // Add native mobile platform classes
     if (this._platformService.isNative) {
       this.document.body.classList.add(BodyClass.isNativeMobile);
+      this._initMobileStatusBar();
+      this._initSafeAreaInsets();
 
       if (this._platformService.isIOS()) {
         this.document.body.classList.add(BodyClass.isIOS);
         this._initIOSKeyboardHandling();
-        this._initIOSStatusBar();
 
         // Add iPad-specific class for tablet optimizations
         if (this._platformService.isIPad()) {
@@ -504,16 +509,77 @@ export class GlobalThemeService {
   }
 
   /**
-   * Initialize iOS status bar styling.
-   * Syncs status bar style with app dark/light mode.
+   * Initialize mobile status bar styling.
+   * Syncs status bar style with app dark/light mode on both iOS and Android.
    */
-  private _initIOSStatusBar(): void {
-    // Set initial status bar style based on current theme
+  /**
+   * Read native safe area insets and set CSS variables.
+   * Works around Capacitor 7's broken adjustMarginsForEdgeToEdge and
+   * Android WebView's unreliable env(safe-area-inset-*) values.
+   */
+  private _initSafeAreaInsets(): void {
+    const applyInsets = (insets: {
+      top: number;
+      right: number;
+      bottom: number;
+      left: number;
+    }): void => {
+      const root = this.document.documentElement;
+      root.style.setProperty('--safe-area-inset-top', `${insets.top}px`);
+      root.style.setProperty('--safe-area-inset-bottom', `${insets.bottom}px`);
+      root.style.setProperty('--safe-area-inset-left', `${insets.left}px`);
+      root.style.setProperty('--safe-area-inset-right', `${insets.right}px`);
+    };
+
+    SafeArea.getSafeAreaInsets().then(({ insets }) => applyInsets(insets));
+    SafeArea.addListener('safeAreaChanged', ({ insets }) => applyInsets(insets));
+    this._patchCdkViewportForSafeArea();
+  }
+
+  /**
+   * Monkey-patch CDK's viewport rect calculation to include safe area insets.
+   * This makes connected overlays (menus, selects) stay within the safe area
+   * instead of extending behind the status bar or home indicator.
+   */
+  private _patchCdkViewportForSafeArea(): void {
+    const proto = FlexibleConnectedPositionStrategy.prototype as any;
+    const original = proto._getNarrowedViewportRect;
+    const doc = this.document;
+    proto._getNarrowedViewportRect = function (): {
+      top: number;
+      left: number;
+      right: number;
+      bottom: number;
+      width: number;
+      height: number;
+    } {
+      const rect = original.call(this);
+      const style = getComputedStyle(doc.documentElement);
+      const safeTop = parseInt(style.getPropertyValue('--safe-area-inset-top'), 10) || 0;
+      const safeBottom =
+        parseInt(style.getPropertyValue('--safe-area-inset-bottom'), 10) || 0;
+      return {
+        ...rect,
+        top: rect.top + safeTop,
+        bottom: rect.bottom - safeBottom,
+        height: rect.height - safeTop - safeBottom,
+      };
+    };
+  }
+
+  private _initMobileStatusBar(): void {
     effect(() => {
       const isDark = this.isDarkTheme();
       StatusBar.setStyle({ style: isDark ? Style.Dark : Style.Light }).catch((err) => {
-        Log.warn('Failed to set iOS status bar style', err);
+        Log.warn('Failed to set status bar style', err);
       });
+      if (this._platformService.isAndroid()) {
+        StatusBar.setBackgroundColor({ color: isDark ? '#131314' : '#f8f8f7' }).catch(
+          (err) => {
+            Log.warn('Failed to set status bar background color', err);
+          },
+        );
+      }
     });
   }
 }

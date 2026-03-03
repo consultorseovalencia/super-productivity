@@ -17,6 +17,7 @@ import { UserInputWaitStateService } from './user-input-wait-state.service';
 import { SuperSyncStatusService } from '../../op-log/sync/super-sync-status.service';
 import {
   AuthFailSPError,
+  MissingCredentialsSPError,
   PotentialCorsError,
   SyncProviderId,
   SyncStatus,
@@ -24,9 +25,9 @@ import {
 import {
   SyncAlreadyInProgressError,
   LocalDataConflictError,
+  MissingRefreshTokenAPIError,
 } from '../../op-log/core/errors/sync-errors';
 import { MAX_LWW_REUPLOAD_RETRIES } from '../../op-log/core/operation-log.const';
-import { LegacySyncProvider } from './legacy-sync-provider.model';
 
 describe('SyncWrapperService', () => {
   let service: SyncWrapperService;
@@ -47,7 +48,7 @@ describe('SyncWrapperService', () => {
   let configSubject: BehaviorSubject<any>;
   let mockSyncCapableProvider: any;
 
-  const createMockSyncConfig = (provider: LegacySyncProvider | null): { sync: any } => ({
+  const createMockSyncConfig = (provider: SyncProviderId | null): { sync: any } => ({
     sync: {
       syncProvider: provider,
       syncInterval: 60000,
@@ -55,9 +56,7 @@ describe('SyncWrapperService', () => {
   });
 
   beforeEach(() => {
-    configSubject = new BehaviorSubject(
-      createMockSyncConfig(LegacySyncProvider.SuperSync),
-    );
+    configSubject = new BehaviorSubject(createMockSyncConfig(SyncProviderId.SuperSync));
 
     mockSyncCapableProvider = {
       uploadOperations: jasmine.createSpy('uploadOperations'),
@@ -66,13 +65,23 @@ describe('SyncWrapperService', () => {
 
     mockProviderManager = jasmine.createSpyObj(
       'SyncProviderManager',
-      ['getActiveProvider', 'setSyncStatus', 'setProviderConfig', 'getProviderById'],
+      [
+        'getActiveProvider',
+        'setSyncStatus',
+        'setProviderConfig',
+        'getProviderById',
+        'clearAuthCredentials',
+        'getLastSyncedProviderId',
+        'setLastSyncedProviderId',
+      ],
       {
         syncStatus$: of('SYNCED'),
         isProviderReady$: of(true),
         isSyncInProgress: false,
       },
     );
+    mockProviderManager.clearAuthCredentials.and.returnValue(Promise.resolve());
+    mockProviderManager.getLastSyncedProviderId.and.returnValue(null);
     mockProviderManager.getActiveProvider.and.returnValue({
       id: SyncProviderId.SuperSync,
     } as any);
@@ -123,7 +132,9 @@ describe('SyncWrapperService', () => {
     });
 
     mockSnackService = jasmine.createSpyObj('SnackService', ['open']);
-    mockMatDialog = jasmine.createSpyObj('MatDialog', ['open']);
+    mockMatDialog = jasmine.createSpyObj('MatDialog', ['open'], {
+      openDialogs: [],
+    });
     mockTranslateService = jasmine.createSpyObj('TranslateService', ['instant']);
     mockTranslateService.instant.and.callFake((key: string) => key);
 
@@ -142,10 +153,14 @@ describe('SyncWrapperService', () => {
     // startWaiting returns a stopWaiting function
     mockUserInputWaitState.startWaiting.and.returnValue(() => {});
 
-    mockSuperSyncStatusService = jasmine.createSpyObj('SuperSyncStatusService', [], {
-      isConfirmedInSync: signal(false),
-      hasNoPendingOps: signal(false),
-    });
+    mockSuperSyncStatusService = jasmine.createSpyObj(
+      'SuperSyncStatusService',
+      ['clearScope'],
+      {
+        isConfirmedInSync: signal(false),
+        hasNoPendingOps: signal(false),
+      },
+    );
 
     TestBed.configureTestingModule({
       providers: [
@@ -219,7 +234,7 @@ describe('SyncWrapperService', () => {
 
   describe('_sync() - Provider handling', () => {
     it('should call _syncVectorClockToPfapi for WebDAV provider', async () => {
-      configSubject.next(createMockSyncConfig(LegacySyncProvider.WebDAV));
+      configSubject.next(createMockSyncConfig(SyncProviderId.WebDAV));
       mockOpLogStore.getVectorClockEntry.and.returnValue(
         Promise.resolve({
           clock: { clientA: 5 },
@@ -235,7 +250,7 @@ describe('SyncWrapperService', () => {
     });
 
     it('should call _syncVectorClockToPfapi for Dropbox provider', async () => {
-      configSubject.next(createMockSyncConfig(LegacySyncProvider.Dropbox));
+      configSubject.next(createMockSyncConfig(SyncProviderId.Dropbox));
       mockOpLogStore.getVectorClockEntry.and.returnValue(
         Promise.resolve({
           clock: { clientA: 5 },
@@ -250,7 +265,7 @@ describe('SyncWrapperService', () => {
     });
 
     it('should NOT call _syncVectorClockToPfapi for SuperSync provider', async () => {
-      configSubject.next(createMockSyncConfig(LegacySyncProvider.SuperSync));
+      configSubject.next(createMockSyncConfig(SyncProviderId.SuperSync));
 
       await service.sync();
 
@@ -266,6 +281,70 @@ describe('SyncWrapperService', () => {
       expect(result).toBe(SyncStatus.InSync);
       expect(mockSyncService.downloadRemoteOps).not.toHaveBeenCalled();
       expect(mockSyncService.uploadPendingOps).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('_sync() - Provider switch detection', () => {
+    it('should pass forceFromSeq0 when provider has changed', async () => {
+      mockProviderManager.getLastSyncedProviderId.and.returnValue(SyncProviderId.Dropbox);
+      configSubject.next(createMockSyncConfig(SyncProviderId.SuperSync));
+
+      await service.sync();
+
+      expect(mockSyncService.downloadRemoteOps).toHaveBeenCalledWith(
+        mockSyncCapableProvider,
+        { forceFromSeq0: true },
+      );
+    });
+
+    it('should NOT pass forceFromSeq0 when provider is the same', async () => {
+      mockProviderManager.getLastSyncedProviderId.and.returnValue(
+        SyncProviderId.SuperSync,
+      );
+      configSubject.next(createMockSyncConfig(SyncProviderId.SuperSync));
+
+      await service.sync();
+
+      expect(mockSyncService.downloadRemoteOps).toHaveBeenCalledWith(
+        mockSyncCapableProvider,
+        undefined,
+      );
+    });
+
+    it('should NOT pass forceFromSeq0 on first-ever sync (no last synced provider)', async () => {
+      mockProviderManager.getLastSyncedProviderId.and.returnValue(null);
+
+      await service.sync();
+
+      expect(mockSyncService.downloadRemoteOps).toHaveBeenCalledWith(
+        mockSyncCapableProvider,
+        undefined,
+      );
+    });
+
+    it('should update lastSyncedProviderId after successful download', async () => {
+      configSubject.next(createMockSyncConfig(SyncProviderId.SuperSync));
+
+      await service.sync();
+
+      expect(mockProviderManager.setLastSyncedProviderId).toHaveBeenCalledWith(
+        SyncProviderId.SuperSync,
+      );
+    });
+
+    it('should NOT update lastSyncedProviderId when download is cancelled', async () => {
+      mockSyncService.downloadRemoteOps.and.returnValue(
+        Promise.resolve({
+          newOpsCount: 0,
+          serverMigrationHandled: false,
+          localWinOpsCreated: 0,
+          cancelled: true,
+        }),
+      );
+
+      await service.sync();
+
+      expect(mockProviderManager.setLastSyncedProviderId).not.toHaveBeenCalled();
     });
   });
 
@@ -529,6 +608,99 @@ describe('SyncWrapperService', () => {
     });
 
     it('should handle AuthFailSPError with config dialog action', async () => {
+      mockSyncService.downloadRemoteOps.and.returnValue(
+        Promise.reject(new AuthFailSPError()),
+      );
+
+      const result = await service.sync();
+
+      expect(result).toBe('HANDLED_ERROR');
+      expect(mockProviderManager.setSyncStatus).toHaveBeenCalledWith('ERROR');
+      expect(mockSuperSyncStatusService.clearScope).toHaveBeenCalled();
+      expect(mockSnackService.open).toHaveBeenCalledWith(
+        jasmine.objectContaining({
+          type: 'ERROR',
+          actionFn: jasmine.any(Function),
+        }),
+      );
+    });
+
+    it('should handle MissingCredentialsSPError with config dialog action', async () => {
+      mockSyncService.downloadRemoteOps.and.returnValue(
+        Promise.reject(new MissingCredentialsSPError('Dropbox no token')),
+      );
+
+      const result = await service.sync();
+
+      expect(result).toBe('HANDLED_ERROR');
+      expect(mockProviderManager.setSyncStatus).toHaveBeenCalledWith('ERROR');
+      expect(mockSuperSyncStatusService.clearScope).toHaveBeenCalled();
+      expect(mockSnackService.open).toHaveBeenCalledWith(
+        jasmine.objectContaining({
+          type: 'ERROR',
+          actionFn: jasmine.any(Function),
+        }),
+      );
+    });
+
+    it('should handle MissingRefreshTokenAPIError with config dialog action', async () => {
+      mockSyncService.downloadRemoteOps.and.returnValue(
+        Promise.reject(new MissingRefreshTokenAPIError()),
+      );
+
+      const result = await service.sync();
+
+      expect(result).toBe('HANDLED_ERROR');
+      expect(mockProviderManager.setSyncStatus).toHaveBeenCalledWith('ERROR');
+      expect(mockSuperSyncStatusService.clearScope).toHaveBeenCalled();
+      expect(mockSnackService.open).toHaveBeenCalledWith(
+        jasmine.objectContaining({
+          type: 'ERROR',
+          actionFn: jasmine.any(Function),
+        }),
+      );
+    });
+
+    it('should call clearAuthCredentials on AuthFailSPError', async () => {
+      mockSyncService.downloadRemoteOps.and.returnValue(
+        Promise.reject(new AuthFailSPError()),
+      );
+
+      await service.sync();
+
+      expect(mockProviderManager.clearAuthCredentials).toHaveBeenCalledWith(
+        SyncProviderId.SuperSync,
+      );
+    });
+
+    it('should call clearAuthCredentials on MissingCredentialsSPError', async () => {
+      mockSyncService.downloadRemoteOps.and.returnValue(
+        Promise.reject(new MissingCredentialsSPError('no token')),
+      );
+
+      await service.sync();
+
+      expect(mockProviderManager.clearAuthCredentials).toHaveBeenCalledWith(
+        SyncProviderId.SuperSync,
+      );
+    });
+
+    it('should call clearAuthCredentials on MissingRefreshTokenAPIError', async () => {
+      mockSyncService.downloadRemoteOps.and.returnValue(
+        Promise.reject(new MissingRefreshTokenAPIError()),
+      );
+
+      await service.sync();
+
+      expect(mockProviderManager.clearAuthCredentials).toHaveBeenCalledWith(
+        SyncProviderId.SuperSync,
+      );
+    });
+
+    it('should still show snack when clearAuthCredentials throws', async () => {
+      mockProviderManager.clearAuthCredentials.and.returnValue(
+        Promise.reject(new Error('IndexedDB error')),
+      );
       mockSyncService.downloadRemoteOps.and.returnValue(
         Promise.reject(new AuthFailSPError()),
       );
@@ -971,8 +1143,8 @@ describe('SyncWrapperService', () => {
   });
 
   describe('syncProviderId$', () => {
-    it('should convert LegacySyncProvider to SyncProviderId', (done) => {
-      configSubject.next(createMockSyncConfig(LegacySyncProvider.SuperSync));
+    it('should emit SyncProviderId from sync config', (done) => {
+      configSubject.next(createMockSyncConfig(SyncProviderId.SuperSync));
 
       service.syncProviderId$.subscribe((providerId) => {
         expect(providerId).toBe(SyncProviderId.SuperSync);
@@ -995,9 +1167,7 @@ describe('SyncWrapperService', () => {
     let isConfirmedSignal: ReturnType<typeof signal<boolean>>;
     let signalConfigSubject: BehaviorSubject<any>;
 
-    const createSignalMockConfig = (
-      provider: LegacySyncProvider | null,
-    ): { sync: any } => ({
+    const createSignalMockConfig = (provider: SyncProviderId | null): { sync: any } => ({
       sync: {
         syncProvider: provider,
         syncInterval: 60000,
@@ -1007,7 +1177,7 @@ describe('SyncWrapperService', () => {
     const createServiceWithSignal = (initialValue: boolean): SyncWrapperService => {
       isConfirmedSignal = signal(initialValue);
       signalConfigSubject = new BehaviorSubject(
-        createSignalMockConfig(LegacySyncProvider.SuperSync),
+        createSignalMockConfig(SyncProviderId.SuperSync),
       );
 
       const signalMockSuperSyncStatusService = {
@@ -1047,7 +1217,7 @@ describe('SyncWrapperService', () => {
     describe('with SuperSync provider', () => {
       it('should return true when SuperSyncStatusService.isConfirmedInSync is true', (done) => {
         signalService = createServiceWithSignal(true);
-        signalConfigSubject.next(createSignalMockConfig(LegacySyncProvider.SuperSync));
+        signalConfigSubject.next(createSignalMockConfig(SyncProviderId.SuperSync));
 
         signalService.superSyncIsConfirmedInSync$.subscribe((isConfirmed) => {
           expect(isConfirmed).toBe(true);
@@ -1057,7 +1227,7 @@ describe('SyncWrapperService', () => {
 
       it('should return false when SuperSyncStatusService.isConfirmedInSync is false', (done) => {
         signalService = createServiceWithSignal(false);
-        signalConfigSubject.next(createSignalMockConfig(LegacySyncProvider.SuperSync));
+        signalConfigSubject.next(createSignalMockConfig(SyncProviderId.SuperSync));
 
         signalService.superSyncIsConfirmedInSync$.subscribe((isConfirmed) => {
           expect(isConfirmed).toBe(false);
@@ -1069,7 +1239,7 @@ describe('SyncWrapperService', () => {
     describe('with file-based providers', () => {
       it('should return false for WebDAV when status service returns false', (done) => {
         signalService = createServiceWithSignal(false);
-        signalConfigSubject.next(createSignalMockConfig(LegacySyncProvider.WebDAV));
+        signalConfigSubject.next(createSignalMockConfig(SyncProviderId.WebDAV));
 
         signalService.superSyncIsConfirmedInSync$.subscribe((isConfirmed) => {
           expect(isConfirmed).toBe(false);
@@ -1079,7 +1249,7 @@ describe('SyncWrapperService', () => {
 
       it('should return true for WebDAV when status service returns true', (done) => {
         signalService = createServiceWithSignal(true);
-        signalConfigSubject.next(createSignalMockConfig(LegacySyncProvider.WebDAV));
+        signalConfigSubject.next(createSignalMockConfig(SyncProviderId.WebDAV));
 
         signalService.superSyncIsConfirmedInSync$.subscribe((isConfirmed) => {
           expect(isConfirmed).toBe(true);
@@ -1089,7 +1259,7 @@ describe('SyncWrapperService', () => {
 
       it('should return false for Dropbox when status service returns false', (done) => {
         signalService = createServiceWithSignal(false);
-        signalConfigSubject.next(createSignalMockConfig(LegacySyncProvider.Dropbox));
+        signalConfigSubject.next(createSignalMockConfig(SyncProviderId.Dropbox));
 
         signalService.superSyncIsConfirmedInSync$.subscribe((isConfirmed) => {
           expect(isConfirmed).toBe(false);
@@ -1099,7 +1269,7 @@ describe('SyncWrapperService', () => {
 
       it('should return true for Dropbox when status service returns true', (done) => {
         signalService = createServiceWithSignal(true);
-        signalConfigSubject.next(createSignalMockConfig(LegacySyncProvider.Dropbox));
+        signalConfigSubject.next(createSignalMockConfig(SyncProviderId.Dropbox));
 
         signalService.superSyncIsConfirmedInSync$.subscribe((isConfirmed) => {
           expect(isConfirmed).toBe(true);
@@ -1109,7 +1279,7 @@ describe('SyncWrapperService', () => {
 
       it('should return false for LocalFile when status service returns false', (done) => {
         signalService = createServiceWithSignal(false);
-        signalConfigSubject.next(createSignalMockConfig(LegacySyncProvider.LocalFile));
+        signalConfigSubject.next(createSignalMockConfig(SyncProviderId.LocalFile));
 
         signalService.superSyncIsConfirmedInSync$.subscribe((isConfirmed) => {
           expect(isConfirmed).toBe(false);
@@ -1119,7 +1289,7 @@ describe('SyncWrapperService', () => {
 
       it('should return true for LocalFile when status service returns true', (done) => {
         signalService = createServiceWithSignal(true);
-        signalConfigSubject.next(createSignalMockConfig(LegacySyncProvider.LocalFile));
+        signalConfigSubject.next(createSignalMockConfig(SyncProviderId.LocalFile));
 
         signalService.superSyncIsConfirmedInSync$.subscribe((isConfirmed) => {
           expect(isConfirmed).toBe(true);

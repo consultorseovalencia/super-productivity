@@ -1,5 +1,5 @@
 import { environment } from '../../../environments/environment';
-import { TRACKING_INTERVAL } from '../../app.constants';
+
 import { getDefaultVoice } from '../voice-reminder/getAvailableVoices';
 import { TaskReminderOptionId } from '../tasks/task.model';
 import { GlobalConfigState } from './global-config.model';
@@ -26,6 +26,7 @@ export const DEFAULT_GLOBAL_CONFIG: GlobalConfigState = {
     isIssuesPanelEnabled: true,
     isProjectNotesEnabled: true,
     isSyncIconEnabled: true,
+    isSearchEnabled: true,
     isDonatePageEnabled: true,
     isEnableUserProfiles: false,
     isHabitsEnabled: true,
@@ -61,6 +62,7 @@ export const DEFAULT_GLOBAL_CONFIG: GlobalConfigState = {
     isEnableProject: true,
     isEnableDue: true,
     isEnableTag: true,
+    urlBehavior: 'keep',
   },
   evaluation: {
     isHideEvaluationSheet: false,
@@ -168,7 +170,6 @@ export const DEFAULT_GLOBAL_CONFIG: GlobalConfigState = {
     trackTimeSound: null,
   },
   timeTracking: {
-    trackingInterval: TRACKING_INTERVAL,
     defaultEstimate: 0,
     defaultEstimateSubTasks: 0,
     isNotifyWhenTimeEstimateExceeded: true,

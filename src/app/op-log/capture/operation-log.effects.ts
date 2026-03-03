@@ -10,7 +10,7 @@ import {
 } from '../core/persistent-action.interface';
 import { uuidv7 } from '../../util/uuid-v7';
 import { devError } from '../../util/dev-error';
-import { incrementVectorClock, limitVectorClockSize } from '../../core/util/vector-clock';
+import { incrementVectorClock } from '../../core/util/vector-clock';
 import { MultiEntityPayload, Operation, ActionType } from '../core/operation.types';
 import { OperationLogCompactionService } from '../persistence/operation-log-compaction.service';
 import { OpLog } from '../../core/log';
@@ -40,7 +40,6 @@ import { SuperSyncStatusService } from '../sync/super-sync-status.service';
  */
 @Injectable()
 export class OperationLogEffects {
-  private clientId?: string;
   private compactionFailures = 0;
   /** Circuit breaker: prevents recursive quota exceeded handling */
   private isHandlingQuotaExceeded = false;
@@ -94,16 +93,15 @@ export class OperationLogEffects {
   );
 
   private async writeOperation(action: PersistentAction): Promise<void> {
-    if (!this.clientId) {
-      // Load existing client ID, or generate a new one if this is first use
-      this.clientId =
-        (await this.clientIdService.loadClientId()) ??
-        (await this.clientIdService.generateNewClientId());
-    }
-    if (!this.clientId) {
+    // Always read from ClientIdService (which has its own in-memory cache).
+    // Do NOT cache locally — BackupService.generateNewClientId() updates the
+    // service cache, and a local cache here would go stale after backup import.
+    const clientId =
+      (await this.clientIdService.loadClientId()) ??
+      (await this.clientIdService.generateNewClientId());
+    if (!clientId) {
       throw new Error('Failed to load or generate clientId - cannot persist operation');
     }
-    const clientId = this.clientId;
 
     // Validate that at least one entity identifier exists for non-bulk operations
     // Bulk operations with entityType 'ALL' don't need specific entity IDs
@@ -173,15 +171,11 @@ export class OperationLogEffects {
           entityChanges,
         };
         const currentClock = await this.vectorClockService.getCurrentVectorClock();
-        const incrementedClock = incrementVectorClock(currentClock, clientId);
-        // Load protected client IDs (e.g., from latest SYNC_IMPORT) to preserve during pruning
-        const protectedClientIds = await this.opLogStore.getProtectedClientIds();
-        // Limit vector clock size to prevent unbounded growth with many clients
-        const newClock = limitVectorClockSize(
-          incrementedClock,
-          clientId,
-          protectedClientIds,
-        );
+        // Client ops carry full vector clocks (no pruning). The server prunes
+        // AFTER comparison but BEFORE storage (see CLAUDE.md #13). Client-side
+        // pruning is harmful: it drops client IDs that the server may still
+        // track, causing false CONCURRENT results in compareVectorClocks.
+        const newClock = incrementVectorClock(currentClock, clientId);
 
         // For bulk operations, entityIds is provided but entityId may not be.
         // The server requires entityId for non-full-state operations.

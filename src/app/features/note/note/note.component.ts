@@ -95,16 +95,17 @@ export class NoteComponent implements OnChanges {
               switchMap((pId) =>
                 pId
                   ? this._projectService.getByIdOnceCatchError$(pId).pipe(
-                      map(
-                        (project) =>
-                          project && {
-                            ...project,
-                            color: project.theme?.primary || DEFAULT_PROJECT_COLOR,
-                            icon: 'list',
-                            theme: {
-                              primary: project.theme?.primary || DEFAULT_PROJECT_COLOR,
-                            },
-                          },
+                      map((project) =>
+                        project
+                          ? {
+                              ...project,
+                              color: project.theme?.primary || DEFAULT_PROJECT_COLOR,
+                              icon: 'list',
+                              theme: {
+                                primary: project.theme?.primary || DEFAULT_PROJECT_COLOR,
+                              },
+                            }
+                          : null,
                       ),
                     )
                   : of(null),
@@ -176,12 +177,16 @@ export class NoteComponent implements OnChanges {
         },
       })
       .afterClosed()
-      .subscribe((content) => {
+      .subscribe((res) => {
         if (!this.note) {
           throw new Error('No note');
         }
-        if (typeof content === 'string') {
-          this._noteService.update(this.note.id, { content });
+        // This removes the project note if the note is made empty and saved by the user.
+        if (res?.action === 'DELETE') {
+          this._noteService.remove(this.note);
+          // This updates the note, when the user clicks the "Save" button.
+        } else if (typeof res === 'string') {
+          this._noteService.update(this.note.id, { content: res });
         }
       });
   }
@@ -201,7 +206,7 @@ export class NoteComponent implements OnChanges {
   private _updateNoteTxt(): void {
     const LIMIT = 320;
     this.isLongNote = this.note.content.length > LIMIT;
-    this.shortenedNote = this.note.content.substr(0, 160) + '\n\n (...)';
+    this.shortenedNote = this.note.content.slice(0, 160) + '\n\n (...)';
     this._updateResolvedContent();
   }
 

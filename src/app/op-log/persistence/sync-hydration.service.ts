@@ -8,12 +8,12 @@ import { ClientIdService } from '../../core/util/client-id.service';
 import { VectorClockService } from '../sync/vector-clock.service';
 import { ValidateStateService } from '../validation/validate-state.service';
 import { loadAllData } from '../../root-store/meta/load-all-data.action';
-import { Operation, OpType, ActionType } from '../core/operation.types';
+import { Operation, OpType, ActionType, SyncImportReason } from '../core/operation.types';
 import { uuidv7 } from '../../util/uuid-v7';
 import {
   incrementVectorClock,
+  limitVectorClockSize,
   mergeVectorClocks,
-  selectProtectedClientIds,
 } from '../../core/util/vector-clock';
 import { OpLog } from '../../core/log';
 import { AppDataComplete } from '../model/model-config';
@@ -69,6 +69,7 @@ export class SyncHydrationService {
     downloadedMainModelData?: Record<string, unknown>,
     remoteVectorClock?: Record<string, number>,
     createSyncImportOp: boolean = true,
+    syncImportReason?: SyncImportReason,
   ): Promise<void> {
     OpLog.normal('SyncHydrationService: Hydrating from remote sync...');
 
@@ -147,7 +148,10 @@ export class SyncHydrationService {
         });
       }
 
-      const newClock = incrementVectorClock(mergedClock, clientId);
+      const newClock = limitVectorClockSize(
+        incrementVectorClock(mergedClock, clientId),
+        clientId,
+      );
 
       let lastSeq: number;
 
@@ -172,6 +176,7 @@ export class SyncHydrationService {
           vectorClock: newClock,
           timestamp: Date.now(),
           schemaVersion: CURRENT_SCHEMA_VERSION,
+          syncImportReason: syncImportReason ?? 'FILE_IMPORT',
         };
 
         // 5. Append operation to SUP_OPS
@@ -255,18 +260,6 @@ export class SyncHydrationService {
       // - Without this, new ops would have clocks missing entries from the SYNC_IMPORT
       await this.opLogStore.setVectorClock(newClock);
       OpLog.normal('SyncHydrationService: Updated vector clock store after sync');
-
-      // 9b. Protect ALL client IDs in the SYNC_IMPORT's vector clock from pruning
-      // This ensures all client IDs from the import aren't pruned from future vector clocks.
-      // If any are pruned, new ops would appear CONCURRENT with the import instead of GREATER_THAN.
-      // See RemoteOpsProcessingService.applyNonConflictingOps for detailed explanation.
-      if (createSyncImportOp) {
-        const protectedIds = selectProtectedClientIds(newClock);
-        await this.opLogStore.setProtectedClientIds(protectedIds);
-        OpLog.normal(
-          `SyncHydrationService: Set protected client IDs from SYNC_IMPORT: [${protectedIds.join(', ')}]`,
-        );
-      }
 
       // 10. Dispatch loadAllData to update NgRx
       this.store.dispatch(loadAllData({ appDataComplete: dataToLoad }));

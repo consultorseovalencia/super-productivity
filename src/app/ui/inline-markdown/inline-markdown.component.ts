@@ -56,6 +56,7 @@ export class InlineMarkdownComponent implements OnInit, OnDestroy {
   private _taskAttachmentService = inject(TaskAttachmentService);
   private _clipboardPasteHandler = inject(ClipboardPasteHandlerService);
   private _currentPastePlaceholder: string | null = null;
+  private _resolveGeneration = 0;
 
   readonly isLock = input<boolean>(false);
   readonly isShowControls = input<boolean>(false);
@@ -115,10 +116,11 @@ export class InlineMarkdownComponent implements OnInit, OnDestroy {
     this.modelCopy.set(v || '');
 
     // Start resolving but don't update the rendered model yet
+    this._resolveGeneration++;
     if (v) {
       this._updateResolvedModel(v);
     } else {
-      this.resolvedModel.set(undefined);
+      this.resolvedModel.set('');
     }
 
     if (!this.isShowEdit()) {
@@ -265,18 +267,13 @@ export class InlineMarkdownComponent implements OnInit, OnDestroy {
       },
     });
 
-    let lastEmittedContent: string | null = null;
-
-    // Subscribe to live auto-save updates from fullscreen dialog
-    dialogRef.componentInstance.contentChanged.subscribe((content: string) => {
-      lastEmittedContent = content;
-      this.modelCopy.set(content);
-      this.changed.emit(content);
-    });
-
     dialogRef.afterClosed().subscribe((res) => {
-      // Only emit if content differs from last auto-saved content
-      if (typeof res === 'string' && res !== lastEmittedContent) {
+      // This resets the task note to its default text
+      if (res?.action === 'DELETE') {
+        this.modelCopy.set('');
+        this.changed.emit('');
+        // This updates the task note on click of the "Save" button only if it contains text.
+      } else if (typeof res === 'string') {
         this.modelCopy.set(res);
         this.changed.emit(res);
       }
@@ -318,34 +315,79 @@ export class InlineMarkdownComponent implements OnInit, OnDestroy {
     ev.preventDefault();
     ev.stopPropagation();
 
-    // If currently editing, save the current textarea content before toggling.
-    // This prevents content loss when mousedown.preventDefault() blocks the blur event.
     const textareaEl = this.textareaEl();
-    if (this.isShowEdit() && textareaEl) {
-      const currentValue = textareaEl.nativeElement.value;
-      if (currentValue !== this.model) {
-        this.model = currentValue;
-        this.changed.emit(currentValue);
-      }
+    let cursorPos: number | undefined;
+    let currentText: string;
+
+    // Read current content from textarea if available, otherwise from modelCopy.
+    // Check textareaEl directly (not isShowEdit) because blur may have
+    // set isShowEdit=false while the textarea is still in the DOM.
+    if (textareaEl) {
+      currentText = textareaEl.nativeElement.value;
+      cursorPos = textareaEl.nativeElement.selectionStart;
+    } else {
+      currentText = this.modelCopy() || '';
     }
 
-    this.isChecklistMode.set(true);
-    this._toggleShowEdit();
+    const INSERT_TEXT = '\n- [ ] ';
 
     if (this.isDefaultText()) {
-      this.modelCopy.set('- [ ] ');
+      const newValue = '- [ ] ';
+      this.model = newValue;
+      this.isChecklistMode.set(true);
+      this.changed.emit(newValue);
+      if (textareaEl) {
+        this.isShowEdit.set(true);
+        this._setTextareaState(newValue.length);
+      } else {
+        this._toggleShowEdit(newValue.length);
+        this.modelCopy.set(newValue);
+      }
+      return;
+    }
+
+    let cleaned: string;
+    let adjustedCursorPos: number | undefined;
+
+    if (cursorPos !== undefined) {
+      // Path A: Textarea visible — insert after cursor's current line
+      let lineEnd = cursorPos;
+      while (lineEnd < currentText.length && currentText[lineEnd] !== '\n') {
+        lineEnd++;
+      }
+      const newText =
+        currentText.substring(0, lineEnd) + INSERT_TEXT + currentText.substring(lineEnd);
+      cleaned = newText.replace(/\n\n- \[/g, '\n- [').replace(/^\n/g, '');
+
+      // Calculate cursor AFTER cleanup to avoid drift
+      const beforeCursor = newText.substring(0, lineEnd + INSERT_TEXT.length);
+      const cleanedBeforeCursor = beforeCursor
+        .replace(/\n\n- \[/g, '\n- [')
+        .replace(/^\n/g, '');
+      adjustedCursorPos = Math.min(cleanedBeforeCursor.length, cleaned.length);
     } else {
-      this.modelCopy.set(this.modelCopy() + '\n- [ ] ');
-      // cleanup string on add
-      this.modelCopy.set(
-        this.modelCopy()
-          ?.replace(/\n\n- \[/g, '\n- [')
-          .replace(/^\n/g, ''),
-      );
+      // Path B: Preview mode — append to end
+      const appended = currentText + INSERT_TEXT;
+      cleaned = appended.replace(/\n\n- \[/g, '\n- [').replace(/^\n/g, '');
+    }
+
+    // Update model with FINAL value and emit to parent.
+    // This ensures Angular CD won't reset modelCopy to a stale pre-insertion value.
+    this.model = cleaned;
+    this.isChecklistMode.set(true);
+    this.changed.emit(cleaned);
+
+    if (cursorPos !== undefined) {
+      // Ensure editor stays open (blur may have set isShowEdit=false)
+      this.isShowEdit.set(true);
+      this._setTextareaState(adjustedCursorPos!);
+    } else {
+      this._toggleShowEdit(cleaned.length);
+      this.modelCopy.set(cleaned);
     }
   }
 
-  private _toggleShowEdit(): void {
+  private _toggleShowEdit(cursorPos?: number): void {
     this.isShowEdit.set(true);
     this.modelCopy.set(this.model || '');
     setTimeout(() => {
@@ -355,7 +397,22 @@ export class InlineMarkdownComponent implements OnInit, OnDestroy {
       }
       textareaEl.nativeElement.value = this.modelCopy();
       textareaEl.nativeElement.focus();
+      if (cursorPos !== undefined) {
+        textareaEl.nativeElement.setSelectionRange(cursorPos, cursorPos);
+      }
       this.resizeTextareaToFit();
+    });
+  }
+
+  private _setTextareaState(cursorPos: number): void {
+    setTimeout(() => {
+      const textareaEl = this.textareaEl();
+      if (textareaEl) {
+        textareaEl.nativeElement.value = this.modelCopy();
+        textareaEl.nativeElement.focus();
+        textareaEl.nativeElement.setSelectionRange(cursorPos, cursorPos);
+        this.resizeTextareaToFit();
+      }
     });
   }
 
@@ -421,13 +478,16 @@ export class InlineMarkdownComponent implements OnInit, OnDestroy {
 
   private async _updateResolvedModel(content: string | undefined): Promise<void> {
     if (!content) {
-      this.resolvedModel.set(content);
+      this.resolvedModel.set('');
       this._cd.markForCheck();
       return;
     }
 
+    // Capture generation to detect if model changed during async resolution
+    const gen = this._resolveGeneration;
     // First resolve all URLs in the markdown
     const resolved = await this._clipboardImageService.resolveMarkdownImages(content);
+    if (gen !== this._resolveGeneration) return;
     this.resolvedModel.set(resolved);
   }
 }

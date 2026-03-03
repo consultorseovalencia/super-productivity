@@ -3,14 +3,9 @@ import { Store } from '@ngrx/store';
 import { ImexViewService } from '../../imex/imex-meta/imex-view.service';
 import { StateSnapshotService } from './state-snapshot.service';
 import { OperationLogStoreService } from '../persistence/operation-log-store.service';
-import { VectorClockService } from '../sync/vector-clock.service';
 import { ClientIdService } from '../../core/util/client-id.service';
 import { Operation, OpType, ActionType } from '../core/operation.types';
 import { CURRENT_SCHEMA_VERSION } from '../persistence/schema-migration.service';
-import {
-  incrementVectorClock,
-  selectProtectedClientIds,
-} from '../../core/util/vector-clock';
 import { uuidv7 } from '../../util/uuid-v7';
 import { loadAllData } from '../../root-store/meta/load-all-data.action';
 import { validateFull } from '../validation/validation-fn';
@@ -44,7 +39,6 @@ export class BackupService {
   private _store = inject(Store);
   private _stateSnapshotService = inject(StateSnapshotService);
   private _opLogStore = inject(OperationLogStoreService);
-  private _vectorClockService = inject(VectorClockService);
   private _clientIdService = inject(ClientIdService);
   private _archiveDbAdapter = inject(ArchiveDbAdapter);
 
@@ -77,7 +71,7 @@ export class BackupService {
    * @param data - The backup data to import
    * @param isSkipLegacyWarnings - If true, skip legacy data format warnings
    * @param isSkipReload - If true, don't reload the page after import
-   * @param isForceConflict - If true, generate new client ID and reset vector clock
+   * @param isForceConflict - If true, reload page after import
    */
   async importCompleteBackup(
     data: AppDataComplete | CompleteBackup<AllModelConfig>,
@@ -134,7 +128,7 @@ export class BackupService {
       }
 
       // 4. Persist to operation log
-      await this._persistImportToOperationLog(validatedData, isForceConflict);
+      await this._persistImportToOperationLog(validatedData);
 
       // 5. Dispatch to NgRx
       this._store.dispatch(loadAllData({ appDataComplete: validatedData }));
@@ -158,7 +152,6 @@ export class BackupService {
 
   private async _persistImportToOperationLog(
     importedData: AppDataComplete,
-    isForceConflict: boolean,
   ): Promise<void> {
     OpLog.normal('BackupService: Persisting import to operation log...');
 
@@ -181,18 +174,11 @@ export class BackupService {
       await this._opLogStore.clearAllOperations();
     }
 
-    let clientId: string;
-    if (isForceConflict) {
-      clientId = await this._clientIdService.generateNewClientId();
-    } else {
-      const loadedClientId = await this._clientIdService.loadClientId();
-      clientId = loadedClientId ?? (await this._clientIdService.generateNewClientId());
-    }
+    // Generate new client ID for both paths - imports are a fresh start
+    const clientId = await this._clientIdService.generateNewClientId();
 
-    const currentClock = await this._vectorClockService.getCurrentVectorClock();
-    const newClock = isForceConflict
-      ? { [clientId]: 2 }
-      : incrementVectorClock(currentClock, clientId);
+    // Fresh clock: new clientId with initial counter for clean baseline
+    const newClock = { [clientId]: 1 };
 
     const opId = uuidv7();
     // IMPORTANT: Uses OpType.BackupImport which maps to reason='recovery' on the server.
@@ -209,6 +195,7 @@ export class BackupService {
       vectorClock: newClock,
       timestamp: Date.now(),
       schemaVersion: CURRENT_SCHEMA_VERSION,
+      syncImportReason: 'BACKUP_RESTORE',
     };
 
     await this._opLogStore.append(op, 'local');
@@ -216,10 +203,6 @@ export class BackupService {
 
     // Update vector clock store (append() doesn't do this, unlike appendWithVectorClockUpdate)
     await this._opLogStore.setVectorClock(newClock);
-
-    // Protect all vector clock keys from pruning
-    const protectedIds = selectProtectedClientIds(newClock);
-    await this._opLogStore.setProtectedClientIds(protectedIds);
 
     await this._opLogStore.saveStateCache({
       state: importedData,

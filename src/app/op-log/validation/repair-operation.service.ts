@@ -8,10 +8,7 @@ import {
   ActionType,
 } from '../core/operation.types';
 import { uuidv7 } from '../../util/uuid-v7';
-import {
-  incrementVectorClock,
-  selectProtectedClientIds,
-} from '../../core/util/vector-clock';
+import { incrementVectorClock, limitVectorClockSize } from '../../core/util/vector-clock';
 import { LockService } from '../sync/lock.service';
 import { T } from '../../t.const';
 import { OpLog } from '../../core/log';
@@ -66,7 +63,10 @@ export class RepairOperationService {
 
     const doCreateOperation = async (): Promise<void> => {
       const currentClock = await this.vectorClockService.getCurrentVectorClock();
-      const newClock = incrementVectorClock(currentClock, clientId);
+      const newClock = limitVectorClockSize(
+        incrementVectorClock(currentClock, clientId),
+        clientId,
+      );
 
       const op: Operation = {
         id: uuidv7(),
@@ -78,16 +78,13 @@ export class RepairOperationService {
         vectorClock: newClock,
         timestamp: Date.now(),
         schemaVersion: CURRENT_SCHEMA_VERSION,
+        syncImportReason: 'REPAIR',
       };
 
       // 1. Append REPAIR operation to log and update vector clock atomically
       seq = await this.opLogStore.appendWithVectorClockUpdate(op, 'local');
 
-      // 2. Protect all vector clock keys from pruning
-      const protectedIds = selectProtectedClientIds(newClock);
-      await this.opLogStore.setProtectedClientIds(protectedIds);
-
-      // 3. Save state cache with repaired state for fast hydration
+      // 2. Save state cache with repaired state for fast hydration
       // Note: vector clock is already updated in step 1, so we omit it here
       await this.opLogStore.saveStateCache({
         state: repairedState,
